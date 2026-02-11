@@ -65,18 +65,18 @@ const router = useRouter();
       <div
         class="p-6 border-t border-sidebar-border absolute bottom-0 w-full bg-sidebar"
       >
-        <div class="text-sm mb-4 text-sidebar-foreground text-center">
-          <div class="font-medium">
+        <div class="text-sm mb-4 text-sidebar-foreground">
+          <div class="font-medium text-left">
             {{ $t("sidebar.userInfo.user") }}: <span id="userName">Admin</span>
           </div>
-          <div class="text-muted-foreground">
+          <div class="text-muted-foreground text-left">
             {{ $t("sidebar.userInfo.role") }}:
             <span id="userRole">Administrator</span>
           </div>
         </div>
         <button
           @click="$emit('logout')"
-          class="w-full flex items-center rtl:flex-row-reverse justify-center gap-2 px-4 py-3 rounded-lg font-medium text-foreground border border-input hover:bg-destructive hover:text-destructive-foreground hover:border-destructive transition-colors"
+          class="w-full flex items-center rtl:flex-row-reverse gap-2 px-4 py-3 rounded-lg font-medium text-foreground hover:bg-destructive/40 hover:text-destructive hover:border-destructive transition-colors"
         >
           <LogOut :size="18" class="rtl:rotate-180" />
           {{ $t("sidebar.logout") }}
