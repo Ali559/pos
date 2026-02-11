@@ -1,0 +1,1383 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Complete POS System</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <link
+            href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap"
+            rel="stylesheet"
+        />
+        <style>
+            * {
+                font-family: "Instrument Sans", sans-serif;
+            }
+            .modal {
+                display: none;
+                position: fixed;
+                z-index: 100;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.5);
+            }
+            .modal.active {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .tab-active {
+                border-bottom: 2px solid #0c0a09;
+                color: #0c0a09;
+            }
+            @keyframes scan {
+                0%,
+                100% {
+                    transform: scale(1);
+                }
+                50% {
+                    transform: scale(1.02);
+                }
+            }
+            .scan-anim {
+                animation: scan 0.3s ease-out;
+            }
+        </style>
+    </head>
+    <body class="bg-stone-50">
+        <!-- LOGIN PAGE -->
+        <div
+            id="loginPage"
+            class="min-h-screen flex items-center justify-center p-6"
+        >
+            <div
+                class="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 border border-stone-200"
+            >
+                <div class="text-center mb-8">
+                    <div class="text-4xl mb-4">🏪</div>
+                    <h1 class="text-2xl font-bold text-stone-900 mb-2">
+                        POS System
+                    </h1>
+                    <p class="text-stone-600">Sign in to your account</p>
+                </div>
+                <form onsubmit="login(event)">
+                    <div class="space-y-4">
+                        <div>
+                            <label
+                                class="block text-sm font-medium text-stone-700 mb-2"
+                                >Username</label
+                            >
+                            <input
+                                type="text"
+                                id="username"
+                                required
+                                class="w-full px-4 py-3 border-2 border-stone-300 rounded-lg focus:border-stone-900 focus:outline-none"
+                            />
+                        </div>
+                        <div>
+                            <label
+                                class="block text-sm font-medium text-stone-700 mb-2"
+                                >Password</label
+                            >
+                            <input
+                                type="password"
+                                id="password"
+                                required
+                                class="w-full px-4 py-3 border-2 border-stone-300 rounded-lg focus:border-stone-900 focus:outline-none"
+                            />
+                        </div>
+                        <button
+                            type="submit"
+                            class="w-full bg-stone-900 hover:bg-stone-800 text-white py-3 rounded-lg font-semibold"
+                        >
+                            Sign In
+                        </button>
+                    </div>
+                </form>
+                <div class="mt-6 text-center text-sm text-stone-500">
+                    Demo: admin / admin123
+                </div>
+            </div>
+        </div>
+
+        <!-- MAIN APP -->
+        <div id="mainApp" class="hidden">
+            <!-- Overlay -->
+            <div
+                id="overlay"
+                class="fixed inset-0 bg-black/50 z-40 hidden"
+                onclick="closeSidebar()"
+            ></div>
+
+            <!-- Sidebar -->
+            <div
+                id="sidebar"
+                class="fixed left-0 top-0 h-full w-72 bg-white border-r z-50 -translate-x-full transition-transform duration-300"
+            >
+                <div class="p-6 border-b">
+                    <div class="flex justify-between mb-6">
+                        <h2 class="text-xl font-semibold">Menu</h2>
+                        <button
+                            onclick="closeSidebar()"
+                            class="p-2 hover:bg-stone-100 rounded-lg"
+                        >
+                            ✕
+                        </button>
+                    </div>
+                    <nav class="space-y-1">
+                        <button
+                            onclick="showView('sales')"
+                            class="w-full flex gap-3 px-4 py-3 rounded-lg hover:bg-stone-100 font-medium"
+                        >
+                            🛒 Point of Sale
+                        </button>
+                        <button
+                            onclick="showView('inventory')"
+                            class="w-full flex gap-3 px-4 py-3 rounded-lg hover:bg-stone-100 font-medium"
+                        >
+                            📦 Inventory
+                        </button>
+                        <button
+                            onclick="showView('analytics')"
+                            class="w-full flex gap-3 px-4 py-3 rounded-lg hover:bg-stone-100 font-medium"
+                        >
+                            📊 Analytics
+                        </button>
+                        <button
+                            onclick="showView('settings')"
+                            class="w-full flex gap-3 px-4 py-3 rounded-lg hover:bg-stone-100 font-medium"
+                        >
+                            ⚙️ Settings
+                        </button>
+                    </nav>
+                </div>
+                <div class="p-6 border-t absolute bottom-0 w-full bg-white">
+                    <div class="text-sm mb-4">
+                        <div class="font-medium">
+                            User: <span id="userName">Admin</span>
+                        </div>
+                        <div>
+                            Role: <span id="userRole">Administrator</span>
+                        </div>
+                    </div>
+                    <button
+                        onclick="logout()"
+                        class="w-full px-4 py-2 bg-stone-100 hover:bg-stone-200 rounded-lg font-medium"
+                    >
+                        Logout
+                    </button>
+                </div>
+            </div>
+
+            <!-- Header -->
+            <header class="bg-white border-b sticky top-0 z-30">
+                <div class="px-6 py-4 flex justify-between">
+                    <div class="flex gap-4">
+                        <button
+                            onclick="toggleSidebar()"
+                            class="p-2 hover:bg-stone-100 rounded-lg"
+                        >
+                            ☰
+                        </button>
+                        <h1 id="pageTitle" class="text-xl font-semibold">
+                            Point of Sale
+                        </h1>
+                    </div>
+                    <div id="currentTime" class="text-sm font-medium"></div>
+                </div>
+            </header>
+
+            <!-- SALES VIEW -->
+            <div id="salesView" class="p-6">
+                <div class="grid lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
+                    <div class="lg:col-span-2 space-y-6">
+                        <div class="bg-white rounded-xl border p-6">
+                            <label class="block text-sm font-medium mb-3"
+                                >Scan Barcode</label
+                            >
+                            <input
+                                type="text"
+                                id="barcode"
+                                class="w-full px-4 py-3 text-lg border-2 rounded-lg focus:border-stone-900 focus:outline-none font-mono"
+                                placeholder="Scan or enter barcode"
+                                autofocus
+                            />
+                            <div class="mt-3 text-sm text-stone-500">
+                                💡 Scan items to add to cart
+                            </div>
+                        </div>
+                        <div class="bg-white rounded-xl border overflow-hidden">
+                            <div class="px-6 py-4 border-b">
+                                <h2 class="font-semibold">Cart Items</h2>
+                            </div>
+                            <table class="w-full">
+                                <thead class="bg-stone-50 border-b">
+                                    <tr>
+                                        <th
+                                            class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                        >
+                                            Product
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-right text-xs font-medium uppercase"
+                                        >
+                                            Price
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-center text-xs font-medium uppercase"
+                                        >
+                                            Qty
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-right text-xs font-medium uppercase"
+                                        >
+                                            Total
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-center text-xs font-medium uppercase"
+                                        >
+                                            Action
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody id="cartBody">
+                                    <tr>
+                                        <td
+                                            colspan="5"
+                                            class="px-6 py-12 text-center text-stone-400"
+                                        >
+                                            Cart is empty
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="space-y-6">
+                        <div class="bg-white rounded-xl border p-6">
+                            <h3 class="font-semibold mb-4">Order Summary</h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between text-sm">
+                                    <span>Subtotal</span
+                                    ><span id="subtotal">$0.00</span>
+                                </div>
+                                <div class="flex justify-between text-sm">
+                                    <span>Tax (10%)</span
+                                    ><span id="tax">$0.00</span>
+                                </div>
+                                <div
+                                    class="pt-3 border-t flex justify-between items-baseline"
+                                >
+                                    <span class="font-medium">Total</span>
+                                    <span id="total" class="text-2xl font-bold"
+                                        >$0.00</span
+                                    >
+                                </div>
+                            </div>
+                        </div>
+                        <button
+                            onclick="checkout()"
+                            id="chargeBtn"
+                            disabled
+                            class="w-full bg-stone-900 hover:bg-stone-800 text-white py-4 rounded-lg font-semibold disabled:opacity-50"
+                        >
+                            Charge $<span id="chargeAmt">0.00</span>
+                        </button>
+                        <button
+                            onclick="clearCart()"
+                            class="w-full border-2 hover:bg-stone-50 py-3 rounded-lg font-medium"
+                        >
+                            Clear Cart
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- INVENTORY VIEW -->
+            <div id="inventoryView" class="p-6 hidden">
+                <div class="max-w-7xl mx-auto">
+                    <div class="mb-6 flex justify-between">
+                        <div>
+                            <h2 class="text-2xl font-bold mb-1">
+                                Inventory Management
+                            </h2>
+                            <p class="text-stone-600">
+                                Manage products and stock
+                            </p>
+                        </div>
+                        <button
+                            onclick="openModal('product')"
+                            class="bg-stone-900 hover:bg-stone-800 text-white py-3 px-6 rounded-lg font-semibold"
+                        >
+                            + Add Product
+                        </button>
+                    </div>
+                    <div class="bg-white rounded-xl border overflow-hidden">
+                        <div class="p-6 border-b flex gap-4">
+                            <input
+                                type="text"
+                                id="searchInv"
+                                placeholder="Search products..."
+                                class="flex-1 px-4 py-2 border rounded-lg"
+                            />
+                            <select class="px-4 py-2 border rounded-lg">
+                                <option>All Categories</option>
+                                <option>Beverages</option>
+                                <option>Snacks</option>
+                                <option>Dairy</option>
+                            </select>
+                        </div>
+                        <table class="w-full">
+                            <thead class="bg-stone-50 border-b">
+                                <tr>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                    >
+                                        SKU
+                                    </th>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                    >
+                                        Name
+                                    </th>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                    >
+                                        Category
+                                    </th>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                    >
+                                        Barcode
+                                    </th>
+                                    <th
+                                        class="px-6 py-3 text-right text-xs font-medium uppercase"
+                                    >
+                                        Price
+                                    </th>
+                                    <th
+                                        class="px-6 py-3 text-right text-xs font-medium uppercase"
+                                    >
+                                        Stock
+                                    </th>
+                                    <th
+                                        class="px-6 py-3 text-center text-xs font-medium uppercase"
+                                    >
+                                        Status
+                                    </th>
+                                    <th
+                                        class="px-6 py-3 text-center text-xs font-medium uppercase"
+                                    >
+                                        Actions
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody id="invBody"></tbody>
+                        </table>
+                        <div class="px-6 py-4 border-t flex justify-between">
+                            <div class="text-sm">
+                                Showing <span id="showing">1-10</span> of
+                                <span id="totalProd">50</span>
+                            </div>
+                            <div class="flex gap-2">
+                                <button
+                                    class="px-3 py-1 border rounded hover:bg-stone-50"
+                                >
+                                    Prev
+                                </button>
+                                <button
+                                    class="px-3 py-1 border rounded hover:bg-stone-50"
+                                >
+                                    Next
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ANALYTICS VIEW -->
+            <div id="analyticsView" class="p-6 hidden">
+                <div class="max-w-7xl mx-auto">
+                    <div class="mb-6">
+                        <h2 class="text-2xl font-bold mb-1">
+                            Analytics & Reports
+                        </h2>
+                        <p class="text-stone-600">Track business performance</p>
+                    </div>
+                    <div class="mb-6 border-b">
+                        <div class="flex gap-6">
+                            <button
+                                onclick="showAnalTab('gen')"
+                                id="tab-gen"
+                                class="px-4 py-3 font-medium tab-active"
+                            >
+                                General
+                            </button>
+                            <button
+                                onclick="showAnalTab('sales')"
+                                id="tab-sales"
+                                class="px-4 py-3 font-medium"
+                            >
+                                Sales
+                            </button>
+                            <button
+                                onclick="showAnalTab('emp')"
+                                id="tab-emp"
+                                class="px-4 py-3 font-medium"
+                            >
+                                Employees
+                            </button>
+                        </div>
+                    </div>
+                    <div id="anal-gen">
+                        <div class="grid md:grid-cols-4 gap-6 mb-6">
+                            <div class="bg-white rounded-xl border p-6">
+                                <div class="text-sm text-stone-600 mb-1">
+                                    Today's Sales
+                                </div>
+                                <div class="text-3xl font-bold">$1,234.56</div>
+                                <div class="text-sm text-green-600 mt-2">
+                                    +12.5%
+                                </div>
+                            </div>
+                            <div class="bg-white rounded-xl border p-6">
+                                <div class="text-sm text-stone-600 mb-1">
+                                    Transactions
+                                </div>
+                                <div class="text-3xl font-bold">48</div>
+                                <div class="text-sm text-green-600 mt-2">
+                                    +8.3%
+                                </div>
+                            </div>
+                            <div class="bg-white rounded-xl border p-6">
+                                <div class="text-sm text-stone-600 mb-1">
+                                    Avg Transaction
+                                </div>
+                                <div class="text-3xl font-bold">$25.72</div>
+                                <div class="text-sm text-red-600 mt-2">
+                                    -3.2%
+                                </div>
+                            </div>
+                            <div class="bg-white rounded-xl border p-6">
+                                <div class="text-sm text-stone-600 mb-1">
+                                    Low Stock Items
+                                </div>
+                                <div class="text-3xl font-bold text-amber-600">
+                                    7
+                                </div>
+                                <div class="text-sm text-stone-500 mt-2">
+                                    Need restocking
+                                </div>
+                            </div>
+                        </div>
+                        <div class="grid lg:grid-cols-2 gap-6">
+                            <div class="bg-white rounded-xl border p-6">
+                                <h3 class="font-semibold mb-4">
+                                    Sales Overview
+                                </h3>
+                                <canvas id="salesChart"></canvas>
+                            </div>
+                            <div class="bg-white rounded-xl border p-6">
+                                <h3 class="font-semibold mb-4">Top Products</h3>
+                                <canvas id="prodChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="anal-sales" class="hidden">
+                        <div class="bg-white rounded-xl border">
+                            <div class="p-6 border-b flex gap-4">
+                                <select class="px-4 py-2 border rounded-lg">
+                                    <option>Today</option>
+                                    <option>This Week</option>
+                                    <option>This Month</option>
+                                </select>
+                                <input
+                                    type="text"
+                                    placeholder="Search..."
+                                    class="flex-1 px-4 py-2 border rounded-lg"
+                                />
+                            </div>
+                            <table class="w-full">
+                                <thead class="bg-stone-50 border-b">
+                                    <tr>
+                                        <th
+                                            class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                        >
+                                            ID
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                        >
+                                            Date
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                        >
+                                            Cashier
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-right text-xs font-medium uppercase"
+                                        >
+                                            Items
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-right text-xs font-medium uppercase"
+                                        >
+                                            Total
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                        >
+                                            Payment
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr class="hover:bg-stone-50">
+                                        <td class="px-6 py-4 font-mono text-sm">
+                                            #TXN-001
+                                        </td>
+                                        <td class="px-6 py-4 text-sm">
+                                            Feb 5, 2:45 PM
+                                        </td>
+                                        <td class="px-6 py-4 text-sm">
+                                            John Doe
+                                        </td>
+                                        <td class="px-6 py-4 text-right">5</td>
+                                        <td
+                                            class="px-6 py-4 text-right font-semibold"
+                                        >
+                                            $45.67
+                                        </td>
+                                        <td class="px-6 py-4 text-sm">Cash</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div id="anal-emp" class="hidden">
+                        <div class="bg-white rounded-xl border">
+                            <div class="p-6 border-b">
+                                <h3 class="font-semibold">
+                                    Employee Performance
+                                </h3>
+                            </div>
+                            <table class="w-full">
+                                <thead class="bg-stone-50 border-b">
+                                    <tr>
+                                        <th
+                                            class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                        >
+                                            Employee
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-right text-xs font-medium uppercase"
+                                        >
+                                            Transactions
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-right text-xs font-medium uppercase"
+                                        >
+                                            Total Sales
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-right text-xs font-medium uppercase"
+                                        >
+                                            Avg
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td class="px-6 py-4 font-medium">
+                                            John Doe
+                                        </td>
+                                        <td class="px-6 py-4 text-right">32</td>
+                                        <td
+                                            class="px-6 py-4 text-right font-semibold text-green-600"
+                                        >
+                                            $687.50
+                                        </td>
+                                        <td class="px-6 py-4 text-right">
+                                            $21.48
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SETTINGS VIEW -->
+            <div id="settingsView" class="p-6 hidden">
+                <div class="max-w-7xl mx-auto">
+                    <div class="mb-6">
+                        <h2 class="text-2xl font-bold mb-1">Settings</h2>
+                        <p class="text-stone-600">Configure your system</p>
+                    </div>
+                    <div class="mb-6 border-b">
+                        <div class="flex gap-6">
+                            <button
+                                onclick="showSetTab('gen')"
+                                id="set-gen"
+                                class="px-4 py-3 font-medium tab-active"
+                            >
+                                General
+                            </button>
+                            <button
+                                onclick="showSetTab('roles')"
+                                id="set-roles"
+                                class="px-4 py-3 font-medium"
+                            >
+                                Roles
+                            </button>
+                            <button
+                                onclick="showSetTab('users')"
+                                id="set-users"
+                                class="px-4 py-3 font-medium"
+                            >
+                                Users
+                            </button>
+                        </div>
+                    </div>
+                    <div id="set-gen-content">
+                        <div class="bg-white rounded-xl border p-6 space-y-6">
+                            <div>
+                                <h3 class="font-semibold mb-4">Appearance</h3>
+                                <label class="block text-sm font-medium mb-2"
+                                    >Theme</label
+                                >
+                                <select
+                                    class="w-full max-w-xs px-4 py-2 border rounded-lg"
+                                >
+                                    <option>Light</option>
+                                    <option>Dark</option>
+                                    <option>System</option>
+                                </select>
+                            </div>
+                            <div class="border-t pt-6">
+                                <h3 class="font-semibold mb-4">Store Info</h3>
+                                <div class="grid md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label
+                                            class="block text-sm font-medium mb-2"
+                                            >Store Name</label
+                                        >
+                                        <input
+                                            type="text"
+                                            value="My Store"
+                                            class="w-full px-4 py-2 border rounded-lg"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label
+                                            class="block text-sm font-medium mb-2"
+                                            >Tax Rate (%)</label
+                                        >
+                                        <input
+                                            type="number"
+                                            value="10"
+                                            class="w-full px-4 py-2 border rounded-lg"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                            <button
+                                class="bg-stone-900 hover:bg-stone-800 text-white py-2 px-6 rounded-lg font-semibold"
+                            >
+                                Save Changes
+                            </button>
+                        </div>
+                    </div>
+                    <div id="set-roles-content" class="hidden">
+                        <div class="bg-white rounded-xl border">
+                            <div class="p-6 border-b flex justify-between">
+                                <h3 class="font-semibold">Manage Roles</h3>
+                                <button
+                                    onclick="openModal('role')"
+                                    class="bg-stone-900 hover:bg-stone-800 text-white py-2 px-4 rounded-lg font-medium"
+                                >
+                                    + Add Role
+                                </button>
+                            </div>
+                            <table class="w-full">
+                                <thead class="bg-stone-50 border-b">
+                                    <tr>
+                                        <th
+                                            class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                        >
+                                            Role
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                        >
+                                            Description
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-right text-xs font-medium uppercase"
+                                        >
+                                            Users
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-center text-xs font-medium uppercase"
+                                        >
+                                            Actions
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody id="rolesBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div id="set-users-content" class="hidden">
+                        <div class="bg-white rounded-xl border">
+                            <div class="p-6 border-b flex justify-between">
+                                <h3 class="font-semibold">Manage Users</h3>
+                                <button
+                                    onclick="openModal('user')"
+                                    class="bg-stone-900 hover:bg-stone-800 text-white py-2 px-4 rounded-lg font-medium"
+                                >
+                                    + Add User
+                                </button>
+                            </div>
+                            <table class="w-full">
+                                <thead class="bg-stone-50 border-b">
+                                    <tr>
+                                        <th
+                                            class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                        >
+                                            Name
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                        >
+                                            Username
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-left text-xs font-medium uppercase"
+                                        >
+                                            Role
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-center text-xs font-medium uppercase"
+                                        >
+                                            Status
+                                        </th>
+                                        <th
+                                            class="px-6 py-3 text-center text-xs font-medium uppercase"
+                                        >
+                                            Actions
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody id="usersBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MODALS -->
+        <div id="productModal" class="modal">
+            <div class="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 border">
+                <div class="flex justify-between mb-6">
+                    <h3 class="text-xl font-semibold">Add Product</h3>
+                    <button onclick="closeModal('product')">✕</button>
+                </div>
+                <div class="space-y-4">
+                    <input
+                        type="text"
+                        placeholder="Scan barcode"
+                        class="w-full px-4 py-2 border-2 rounded-lg font-mono"
+                    />
+                    <div class="grid grid-cols-2 gap-4">
+                        <input
+                            type="text"
+                            placeholder="Product Name"
+                            class="px-4 py-2 border rounded-lg"
+                        />
+                        <input
+                            type="text"
+                            placeholder="SKU"
+                            class="px-4 py-2 border rounded-lg"
+                        />
+                    </div>
+                    <div class="grid grid-cols-3 gap-4">
+                        <input
+                            type="number"
+                            placeholder="Price"
+                            class="px-4 py-2 border rounded-lg"
+                        />
+                        <input
+                            type="number"
+                            placeholder="Cost"
+                            class="px-4 py-2 border rounded-lg"
+                        />
+                        <input
+                            type="number"
+                            placeholder="Stock"
+                            class="px-4 py-2 border rounded-lg"
+                        />
+                    </div>
+                    <select class="w-full px-4 py-2 border rounded-lg">
+                        <option>Select Category</option>
+                    </select>
+                    <div class="flex gap-3">
+                        <button
+                            onclick="saveProduct()"
+                            class="flex-1 bg-stone-900 text-white py-3 rounded-lg font-semibold"
+                        >
+                            Save</button
+                        ><button
+                            onclick="closeModal('product')"
+                            class="px-6 py-3 border rounded-lg"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="roleModal" class="modal">
+            <div
+                class="bg-white rounded-xl p-6 max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto border"
+            >
+                <div class="flex justify-between mb-6">
+                    <h3 class="text-xl font-semibold">Add Role</h3>
+                    <button onclick="closeModal('role')">✕</button>
+                </div>
+                <div class="space-y-4">
+                    <input
+                        type="text"
+                        placeholder="Role Name"
+                        class="w-full px-4 py-2 border rounded-lg"
+                    />
+                    <textarea
+                        placeholder="Description"
+                        rows="2"
+                        class="w-full px-4 py-2 border rounded-lg"
+                    ></textarea>
+                    <div>
+                        <label class="block text-sm font-medium mb-3"
+                            >Permissions</label
+                        >
+                        <div
+                            class="space-y-3 p-4 border rounded-lg max-h-96 overflow-y-auto"
+                        >
+                            <div class="border-b pb-3">
+                                <div class="font-medium mb-2">Sales</div>
+                                <div class="grid grid-cols-2 gap-2 pl-4">
+                                    <label class="flex gap-2 text-sm"
+                                        ><input type="checkbox" /> Create</label
+                                    >
+                                    <label class="flex gap-2 text-sm"
+                                        ><input type="checkbox" /> View</label
+                                    >
+                                    <label class="flex gap-2 text-sm"
+                                        ><input type="checkbox" /> Void</label
+                                    >
+                                    <label class="flex gap-2 text-sm"
+                                        ><input type="checkbox" /> Refund</label
+                                    >
+                                </div>
+                            </div>
+                            <div class="border-b pb-3">
+                                <div class="font-medium mb-2">Inventory</div>
+                                <div class="grid grid-cols-2 gap-2 pl-4">
+                                    <label class="flex gap-2 text-sm"
+                                        ><input type="checkbox" /> Create</label
+                                    >
+                                    <label class="flex gap-2 text-sm"
+                                        ><input type="checkbox" /> View</label
+                                    >
+                                    <label class="flex gap-2 text-sm"
+                                        ><input type="checkbox" /> Edit</label
+                                    >
+                                    <label class="flex gap-2 text-sm"
+                                        ><input type="checkbox" /> Delete</label
+                                    >
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex gap-3">
+                        <button
+                            onclick="saveRole()"
+                            class="flex-1 bg-stone-900 text-white py-3 rounded-lg font-semibold"
+                        >
+                            Save</button
+                        ><button
+                            onclick="closeModal('role')"
+                            class="px-6 py-3 border rounded-lg"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="userModal" class="modal">
+            <div class="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 border">
+                <div class="flex justify-between mb-6">
+                    <h3 class="text-xl font-semibold">Add User</h3>
+                    <button onclick="closeModal('user')">✕</button>
+                </div>
+                <div class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <input
+                            type="text"
+                            placeholder="Full Name"
+                            class="px-4 py-2 border rounded-lg"
+                        />
+                        <input
+                            type="text"
+                            placeholder="Username"
+                            class="px-4 py-2 border rounded-lg"
+                        />
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <input
+                            type="password"
+                            placeholder="Password"
+                            class="px-4 py-2 border rounded-lg"
+                        />
+                        <input
+                            type="password"
+                            placeholder="Confirm Password"
+                            class="px-4 py-2 border rounded-lg"
+                        />
+                    </div>
+                    <select class="w-full px-4 py-2 border rounded-lg">
+                        <option>Select Role</option>
+                        <option>Admin</option>
+                        <option>Cashier</option>
+                    </select>
+                    <div class="flex gap-3">
+                        <button
+                            onclick="saveUser()"
+                            class="flex-1 bg-stone-900 text-white py-3 rounded-lg font-semibold"
+                        >
+                            Save</button
+                        ><button
+                            onclick="closeModal('user')"
+                            class="px-6 py-3 border rounded-lg"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            const db = {
+                123: {
+                    name: "Coca Cola 330ml",
+                    price: 1.5,
+                    sku: "BEV001",
+                    cat: "Beverages",
+                    cost: 0.8,
+                    stock: 45,
+                },
+                456: {
+                    name: "Lays Chips",
+                    price: 2.25,
+                    sku: "SNK001",
+                    cat: "Snacks",
+                    cost: 1.2,
+                    stock: 32,
+                },
+                789: {
+                    name: "Fresh Milk 1L",
+                    price: 3.99,
+                    sku: "DAI001",
+                    cat: "Dairy",
+                    cost: 2.5,
+                    stock: 18,
+                },
+            };
+            let cart = [];
+
+            // Auth
+            function login(e) {
+                e.preventDefault();
+                if (
+                    document.getElementById("username").value === "admin" &&
+                    document.getElementById("password").value === "admin123"
+                ) {
+                    document
+                        .getElementById("loginPage")
+                        .classList.add("hidden");
+                    document
+                        .getElementById("mainApp")
+                        .classList.remove("hidden");
+                    showView("sales");
+                } else alert("Invalid credentials");
+            }
+
+            function logout() {
+                if (confirm("Logout?")) {
+                    document.getElementById("mainApp").classList.add("hidden");
+                    document
+                        .getElementById("loginPage")
+                        .classList.remove("hidden");
+                }
+            }
+
+            // Time
+            setInterval(() => {
+                document.getElementById("currentTime").textContent =
+                    new Date().toLocaleString("en-US", {
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                    });
+            }, 1000);
+
+            // Sidebar
+            function toggleSidebar() {
+                document
+                    .getElementById("sidebar")
+                    .classList.toggle("-translate-x-full");
+                document.getElementById("overlay").classList.toggle("hidden");
+            }
+            function closeSidebar() {
+                document
+                    .getElementById("sidebar")
+                    .classList.add("-translate-x-full");
+                document.getElementById("overlay").classList.add("hidden");
+            }
+
+            // Views
+            function showView(view) {
+                [
+                    "salesView",
+                    "inventoryView",
+                    "analyticsView",
+                    "settingsView",
+                ].forEach((v) =>
+                    document.getElementById(v).classList.add("hidden"),
+                );
+                document
+                    .getElementById(view + "View")
+                    .classList.remove("hidden");
+                document.getElementById("pageTitle").textContent = {
+                    sales: "Point of Sale",
+                    inventory: "Inventory",
+                    analytics: "Analytics",
+                    settings: "Settings",
+                }[view];
+                closeSidebar();
+                if (view === "sales")
+                    setTimeout(
+                        () => document.getElementById("barcode").focus(),
+                        100,
+                    );
+                if (view === "inventory") renderInventory();
+                if (view === "analytics") renderCharts();
+                if (view === "settings") {
+                    renderRoles();
+                    renderUsers();
+                }
+            }
+
+            // Sales
+            document
+                .getElementById("barcode")
+                ?.addEventListener("keypress", (e) => {
+                    if (e.key === "Enter") {
+                        const code = e.target.value.trim();
+                        if (db[code]) {
+                            const item = cart.find((i) => i.code === code);
+                            if (item) item.qty++;
+                            else cart.push({ ...db[code], code, qty: 1 });
+                            renderCart();
+                            e.target.value = "";
+                            e.target.classList.add("scan-anim");
+                            setTimeout(
+                                () => e.target.classList.remove("scan-anim"),
+                                300,
+                            );
+                        } else {
+                            alert("Product not found");
+                            e.target.value = "";
+                        }
+                    }
+                });
+
+            function renderCart() {
+                const tbody = document.getElementById("cartBody");
+                if (!cart.length) {
+                    tbody.innerHTML =
+                        '<tr><td colspan="5" class="px-6 py-12 text-center text-stone-400">Cart is empty</td></tr>';
+                } else {
+                    tbody.innerHTML = cart
+                        .map(
+                            (item, i) => `
+                    <tr class="hover:bg-stone-50">
+                        <td class="px-6 py-4"><div class="font-medium">${item.name}</div><div class="text-xs text-stone-500">SKU: ${item.sku}</div></td>
+                        <td class="px-6 py-4 text-right font-medium">$${item.price.toFixed(2)}</td>
+                        <td class="px-6 py-4"><div class="flex justify-center gap-2">
+                            <button onclick="updateQty(${i},-1)" class="w-8 h-8 border rounded hover:bg-stone-100">−</button>
+                            <span class="w-12 text-center font-semibold">${item.qty}</span>
+                            <button onclick="updateQty(${i},1)" class="w-8 h-8 border rounded hover:bg-stone-100">+</button>
+                        </div></td>
+                        <td class="px-6 py-4 text-right font-semibold">$${(item.price * item.qty).toFixed(2)}</td>
+                        <td class="px-6 py-4 text-center"><button onclick="removeItem(${i})" class="text-red-600 hover:bg-red-50 p-2 rounded">🗑</button></td>
+                    </tr>
+                `,
+                        )
+                        .join("");
+                }
+                updateSummary();
+            }
+
+            function updateQty(i, d) {
+                cart[i].qty += d;
+                if (cart[i].qty <= 0) cart.splice(i, 1);
+                renderCart();
+            }
+
+            function removeItem(i) {
+                cart.splice(i, 1);
+                renderCart();
+            }
+
+            function updateSummary() {
+                const sub = cart.reduce((s, i) => s + i.price * i.qty, 0);
+                const tax = sub * 0.1;
+                const total = sub + tax;
+                document.getElementById("subtotal").textContent =
+                    `$${sub.toFixed(2)}`;
+                document.getElementById("tax").textContent =
+                    `$${tax.toFixed(2)}`;
+                document.getElementById("total").textContent =
+                    `$${total.toFixed(2)}`;
+                document.getElementById("chargeAmt").textContent =
+                    total.toFixed(2);
+                document.getElementById("chargeBtn").disabled = !cart.length;
+            }
+
+            function clearCart() {
+                if (cart.length && confirm("Clear cart?")) {
+                    cart = [];
+                    renderCart();
+                }
+            }
+
+            function checkout() {
+                if (!cart.length) return;
+                alert("Payment completed!");
+                cart = [];
+                renderCart();
+            }
+
+            // Inventory
+            function renderInventory() {
+                document.getElementById("invBody").innerHTML = Object.entries(
+                    db,
+                )
+                    .map(
+                        ([code, p]) => `
+                <tr class="hover:bg-stone-50">
+                    <td class="px-6 py-4 font-mono text-sm">${p.sku}</td>
+                    <td class="px-6 py-4 font-medium">${p.name}</td>
+                    <td class="px-6 py-4">${p.cat}</td>
+                    <td class="px-6 py-4 font-mono text-sm">${code}</td>
+                    <td class="px-6 py-4 text-right font-medium">$${p.price.toFixed(2)}</td>
+                    <td class="px-6 py-4 text-right font-semibold ${p.stock < 10 ? "text-amber-600" : "text-green-600"}">${p.stock}</td>
+                    <td class="px-6 py-4 text-center"><span class="px-2.5 py-0.5 rounded-full text-xs font-medium ${p.stock > 10 ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}">${p.stock > 10 ? "In Stock" : "Low Stock"}</span></td>
+                    <td class="px-6 py-4 text-center"><button class="hover:bg-stone-100 p-1.5 rounded">✏️</button><button class="hover:bg-red-50 p-1.5 rounded text-red-600">🗑</button></td>
+                </tr>
+            `,
+                    )
+                    .join("");
+            }
+
+            // Analytics
+            function showAnalTab(tab) {
+                ["gen", "sales", "emp"].forEach((t) => {
+                    document
+                        .getElementById("anal-" + t)
+                        .classList.add("hidden");
+                    document
+                        .getElementById("tab-" + t)
+                        .classList.remove("tab-active");
+                });
+                document
+                    .getElementById("anal-" + tab)
+                    .classList.remove("hidden");
+                document
+                    .getElementById("tab-" + tab)
+                    .classList.add("tab-active");
+            }
+
+            function renderCharts() {
+                const sc = document.getElementById("salesChart");
+                if (sc && !sc.chart) {
+                    sc.chart = new Chart(sc, {
+                        type: "line",
+                        data: {
+                            labels: [
+                                "Mon",
+                                "Tue",
+                                "Wed",
+                                "Thu",
+                                "Fri",
+                                "Sat",
+                                "Sun",
+                            ],
+                            datasets: [
+                                {
+                                    label: "Sales",
+                                    data: [
+                                        850, 920, 780, 1100, 1050, 1400, 1234,
+                                    ],
+                                    borderColor: "#292524",
+                                    tension: 0.4,
+                                },
+                            ],
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { display: false } },
+                        },
+                    });
+                }
+                const pc = document.getElementById("prodChart");
+                if (pc && !pc.chart) {
+                    pc.chart = new Chart(pc, {
+                        type: "bar",
+                        data: {
+                            labels: ["Coca Cola", "Milk", "Bread", "Chips"],
+                            datasets: [
+                                {
+                                    label: "Sold",
+                                    data: [145, 89, 67, 54],
+                                    backgroundColor: "#292524",
+                                },
+                            ],
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { display: false } },
+                        },
+                    });
+                }
+            }
+
+            // Settings
+            function showSetTab(tab) {
+                ["gen", "roles", "users"].forEach((t) => {
+                    document
+                        .getElementById("set-" + t + "-content")
+                        .classList.add("hidden");
+                    document
+                        .getElementById("set-" + t)
+                        .classList.remove("tab-active");
+                });
+                document
+                    .getElementById("set-" + tab + "-content")
+                    .classList.remove("hidden");
+                document
+                    .getElementById("set-" + tab)
+                    .classList.add("tab-active");
+            }
+
+            function renderRoles() {
+                document.getElementById("rolesBody").innerHTML = [
+                    { name: "Admin", desc: "Full access", users: 1 },
+                    { name: "Manager", desc: "Inventory & reports", users: 2 },
+                    { name: "Cashier", desc: "Sales only", users: 5 },
+                ]
+                    .map(
+                        (r) => `
+                <tr class="hover:bg-stone-50">
+                    <td class="px-6 py-4 font-medium">${r.name}</td>
+                    <td class="px-6 py-4">${r.desc}</td>
+                    <td class="px-6 py-4 text-right font-medium">${r.users}</td>
+                    <td class="px-6 py-4 text-center"><button class="hover:bg-stone-100 p-1.5 rounded">👁</button><button class="hover:bg-stone-100 p-1.5 rounded">✏️</button><button class="hover:bg-red-50 p-1.5 rounded text-red-600">🗑</button></td>
+                </tr>
+            `,
+                    )
+                    .join("");
+            }
+
+            function renderUsers() {
+                document.getElementById("usersBody").innerHTML = [
+                    {
+                        name: "Admin User",
+                        user: "admin",
+                        role: "Admin",
+                        status: "Active",
+                    },
+                    {
+                        name: "John Doe",
+                        user: "johnd",
+                        role: "Cashier",
+                        status: "Active",
+                    },
+                ]
+                    .map(
+                        (u) => `
+                <tr class="hover:bg-stone-50">
+                    <td class="px-6 py-4 font-medium">${u.name}</td>
+                    <td class="px-6 py-4 font-mono text-sm">${u.user}</td>
+                    <td class="px-6 py-4">${u.role}</td>
+                    <td class="px-6 py-4 text-center"><span class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">${u.status}</span></td>
+                    <td class="px-6 py-4 text-center"><button class="hover:bg-stone-100 p-1.5 rounded">👁</button><button class="hover:bg-stone-100 p-1.5 rounded">✏️</button><button class="hover:bg-red-50 p-1.5 rounded text-red-600">🗑</button></td>
+                </tr>
+            `,
+                    )
+                    .join("");            }
+
+            // Modals
+            function openModal(type) {
+                document.getElementById(type + "Modal").classList.add("active");
+            }
+            function closeModal(type) {
+                document
+                    .getElementById(type + "Modal")
+                    .classList.remove("active");
+            }
+            function saveProduct() {
+                alert("Product saved!");
+                closeModal("product");
+                renderInventory();
+            }
+            function saveRole() {
+                alert("Role saved!");
+                closeModal("role");
+                renderRoles();
+            }
+            function saveUser() {
+                alert("User saved!");
+                closeModal("user");
+                renderUsers();
+            }
+
+            // Keep barcode focused
+            setInterval(() => {
+                if (
+                    !document
+                        .getElementById("salesView")
+                        .classList.contains("hidden")
+                ) {
+                    if (
+                        document.activeElement !==
+                        document.getElementById("barcode")
+                    ) {
+                        document.getElementById("barcode").focus();
+                    }
+                }
+            }, 500);
+        </script>
+    </body>
+</html>
