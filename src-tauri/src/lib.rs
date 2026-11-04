@@ -2,6 +2,7 @@ mod audit;
 mod auth;
 #[cfg(debug_assertions)]
 mod bridge;
+mod catalog;
 mod commands;
 mod ctx;
 mod db;
@@ -52,6 +53,13 @@ pub fn run() {
             commands::save_schedule,
             commands::delete_schedule,
             commands::copy_schedule_week,
+            commands::create_category,
+            commands::update_category,
+            commands::move_category,
+            commands::set_category_active,
+            commands::delete_category,
+            commands::create_product,
+            commands::update_product,
             commands::seed_demo_data,
         ])
         .run(tauri::generate_context!())

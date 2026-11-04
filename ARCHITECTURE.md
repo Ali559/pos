@@ -2,7 +2,7 @@
 
 A desktop point-of-sale app for small shops. It runs offline on the till machine as a native window (Tauri), with a Vue 3 front end and a local SQLite database. The interface is trilingual: Kurdish Sorani (default, right-to-left), Arabic (right-to-left), and English (left-to-right).
 
-> Status: Phases 1 and 2 of `PLAN.md` are in: SQLite data layer, three languages, Rust media pipeline, shop profile, real sign-in (password or PIN), dynamic roles and permissions enforced in Rust, employees, shifts and schedules. Checkout and product editing are still stubs, and analytics still shows sample numbers. `FEATURES.md` is the wider backlog.
+> Status: Phases 1–3 of `PLAN.md` are in: SQLite data layer, three languages, Rust media pipeline, shop profile, real sign-in (password or PIN), dynamic roles and permissions enforced in Rust, employees, shifts and schedules, a two-level category tree with icons, and a full product editor with photos, icons and barcodes. Checkout and stock adjustments are still stubs, and analytics still shows sample numbers. `FEATURES.md` is the wider backlog.
 
 ## Stack
 
@@ -14,7 +14,8 @@ A desktop point-of-sale app for small shops. It runs offline on the till machine
 | Styling | Tailwind CSS v4 (`@tailwindcss/vite`) | Design tokens are CSS variables in `src/index.css`, mapped into Tailwind with `@theme inline`. |
 | Fonts | Schibsted Grotesk, Vazirmatn (`@fontsource-variable`), Sarchia Makka (bundled) | Self-hosted so the till renders correctly offline. |
 | Components | shadcn-vue (new-york style) on reka-ui | Copied into `src/components/ui/`; edit them freely, they are owned code. |
-| Icons | lucide-vue-next | |
+| UI icons | lucide-vue-next | Interface chrome (buttons, nav). |
+| Catalog icons | Tabler via `@iconify-json/tabler` + `@iconify/vue/offline` | Categories and products; drawn offline, never fetched. |
 | Charts | Chart.js 4 | Wrapped by `src/components/data/Chart.vue`. |
 | Routing | vue-router 5, memory history | No URLs exposed; navigation is purely in-app. |
 | i18n | vue-i18n 11 (composition mode) | One file per language in `src/utils/i18n/locales/`. |
@@ -46,9 +47,12 @@ pos/
 │   │   └── SettingsView.vue      General (theme, tax, sample data), Shop
 │   ├── components/
 │   │   ├── menus/                Sidebar.vue (nav rail filtered by permission, user menu), Header.vue (shop, user, shift)
-│   │   ├── staff/                EmployeesTab, RolesTab, ScheduleTab, EditSheet (side panel for forms)
+│   │   ├── EditSheet.vue         Side panel used by every create/edit form
+│   │   ├── catalog/              CategoriesTab, ProductSheet (editor), ProductThumb
+│   │   ├── icons/                AppIcon (renders "tabler:…" keys), IconPicker (suggest + browse)
+│   │   ├── staff/                EmployeesTab, RolesTab, ScheduleTab
 │   │   ├── shop/                 ShopForm, LogoField
-│   │   ├── media/MediaImage.vue  Blurhash placeholder → fades in the stored WebP
+│   │   ├── media/                MediaImage (blurhash → WebP), MediaGallery (ordered photos, cover first)
 │   │   ├── providers/LocaleProvider.vue
 │   │   ├── LanguageSwitcher.vue
 │   │   └── ui/                   shadcn-vue primitives
@@ -64,16 +68,24 @@ pos/
 │   │   ├── errors.ts             errorMessage(): translates Rust error codes
 │   │   ├── format.ts, locale.ts  Money, dates, times; Kurdish fallbacks
 │   │   ├── media.ts              uploadMedia(), mediaUrl()
+│   │   ├── icons.ts              Lazy icon set + index, suggestIcons(), searchIcons(), recent icons
+│   │   ├── iconSearch.ts         Pure tokenize/normalize/score (tested with bun)
 │   │   └── categoryColor.ts, utils.ts
+│   ├── data/
+│   │   ├── icon-index.json       Generated: Tabler names, categories, tags (scripts/build-icon-index.mjs)
+│   │   └── iconSynonyms.ts       Kurdish/Arabic/English shop words → icon keywords
 │   └── utils/i18n/               languages table, localized(), locales/{en,ku,ar}.ts
+├── scripts/build-icon-index.mjs  Regenerates icon-index.json from @tabler/icons metadata
+├── tests/                        bun tests (icon suggestions)
 └── src-tauri/
-    ├── migrations/               0001_init, 0002_shop_media_i18n, 0003_people
+    ├── migrations/               0001_init, 0002_shop_media_i18n, 0003_people, 0004_catalog
     ├── seeds/demo.sql            Sample catalog (IQD), debug builds only
     ├── src/lib.rs                Builder: sql plugin + migrations, read pool, session, commands
     ├── src/commands.rs           The command list → #[tauri::command]s + dispatch() for the bridge
     ├── src/ctx.rs                Ctx { pool, read_pool, session, media_dir }; now()
     ├── src/auth.rs               Hashing, sessions, require(permission), setup, login, shifts on sign-in
     ├── src/staff.rs              Roles and employees, anti-escalation rules
+    ├── src/catalog.rs            Categories (tree, order, archive) and products (barcodes, photos, initial stock)
     ├── src/shifts.rs             Clock in/out, schedules, copy week
     ├── src/settings.rs           Settings keys and shop profile writes
     ├── src/query.rs              Read-only `select` for the WebView
@@ -175,6 +187,14 @@ Seeded roles: **Owner** (system role, implicitly every permission, can't be edit
 
 `upload_media` takes raw bytes (header `x-file-name`). It requires a signed-in user, except during first-run setup. Steps: reject empty files and files over 25 MB, dedupe by SHA-256, decode, apply EXIF orientation, cap the longest side at 1600 px, encode lossy WebP q80, compute a 4×3 blurhash, write `<app_data_dir>/media/<uuid>.webp`, insert `media_files`. `<MediaImage>` paints the blurhash, then fades in the file via the asset protocol.
 
+## Catalog and icons
+
+- **Categories** form a two-level tree (`parent_id`; Rust refuses a third level or moving a parent under another). Names are unique per parent, case-insensitive. Every category has an `icon_key`; subcategories may leave `color` empty to use the parent's. Order is `display_order` within siblings, changed with `move_category`. Categories with products or children can't be deleted, only archived (hides them and their subcategories from the register and pickers).
+- **Products** have one required `name` plus optional `name_ku` / `name_ar` (shown via `localized()`), optional `icon_key`, ordered photos in `product_media` (position 0 is the cover), a primary barcode on `products.barcode` and extras in `product_barcodes`. Barcodes are unique across both. A blank SKU becomes `P-00042`. Stock is set once at creation and logged as a `stock_adjustments` row; later changes are a separate permission (`inventory.adjust_stock`). Products not for sale (`is_active = 0`) are hidden from the register and scanner.
+- **What a product looks like** (`ProductThumb`): cover photo → its icon → its category's icon → initials.
+- **Icons**: icon keys are `"<set>:<name>"` (today only `tabler:`). The drawing data (~2 MB) and the tag index (~450 KB) are lazy chunks loaded in the background at startup; `AppIcon` keeps its box until they arrive. `@iconify/vue/offline` never calls the Iconify API.
+- **Suggestions** (`lib/iconSearch.ts`): the name, in any of the three languages, is tokenized (sizes like `330ml` and the Arabic `ال` dropped, letter variants such as ي/ی and ك/ک folded). Tokens are mapped to English keywords through `iconSynonyms.ts` by prefix, so Kurdish suffixes still match, and icons are scored on name and tag matches. The parent category's icon category breaks ties. Loose prefix-only matches are dropped when there are three or more solid ones. Grow `iconSynonyms.ts` when shops name things it misses; `bun test` checks a set of real names.
+
 ## Developing in a browser: the dev bridge
 
 `bun run tauri dev` also starts `bridge.rs` on `127.0.0.1:1430` (debug builds only; not compiled into release). Vite proxies `/__bridge/*` to it. A normal browser tab on `http://localhost:1420` then calls the same Rust commands on the same database and session as the app window (`lib/ipc.ts` picks the route automatically). The bridge only answers requests with an `x-pos-bridge: 1` header from that origin. Plain GETs of `/media/*` are allowed for `<img>` tags. This is how the UI is checked end to end without driving the native window.
@@ -185,6 +205,7 @@ Seeded roles: **Owner** (system role, implicitly every permission, can't be edit
 - Every user-visible string goes through `$t()`, added to `en`, `ku` and `ar` together; the three files keep identical structure.
 - New write → a function in the right Rust module that starts with `auth::require`, an entry in `commands!`, a line in `generate_handler!` (a test fails if you forget), and a Rust test.
 - New read → a function in `src/db/*`. Never select password or PIN hashes.
+- Dev builds compile dependencies with `opt-level = 2` (`Cargo.toml`): image processing and argon2 are ~100× slower unoptimized.
 - Money through `formatCurrency()`; dates and times through `src/lib/locale.ts`.
 - Design tokens only; logical spacing for anything that mirrors.
 - Path alias `@/` → `src/`.
@@ -195,7 +216,9 @@ Seeded roles: **Owner** (system role, implicitly every permission, can't be edit
 bun install                  # install JS deps
 bun run tauri dev            # desktop app + dev bridge (needs ports 1420 and 1430 free)
 bun run build                # type-check (vue-tsc) and build the web bundle
-cd src-tauri && cargo test   # auth, RBAC, shifts, settings, read-only select, media, migrations
+bun run test                 # icon suggestion/search tests
+cd src-tauri && cargo test   # auth, RBAC, shifts, catalog, settings, read-only select, media, migrations
+bun run icons:index          # rebuild src/data/icon-index.json after upgrading the icon packages
 bun run tauri build          # native installer
 ```
 

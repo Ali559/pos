@@ -20,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import EditSheet from "./EditSheet.vue";
+import EditSheet from "@/components/EditSheet.vue";
 import { listEmployees, listRoles, type Employee, type Role } from "@/db/staff";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";

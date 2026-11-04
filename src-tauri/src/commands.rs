@@ -7,7 +7,7 @@ use tauri::AppHandle;
 
 use crate::ctx::Ctx;
 use crate::error::{Error, Result};
-use crate::{auth, query, settings, shifts, staff};
+use crate::{auth, catalog, query, settings, shifts, staff};
 
 macro_rules! commands {
     ($( $name:ident $( ($args:ty) )? -> $out:ty => $f:path; )*) => {
@@ -61,6 +61,14 @@ commands! {
     save_schedule (shifts::ScheduleInput) -> i64 => shifts::save_schedule;
     delete_schedule (shifts::IdArgs) -> () => shifts::delete_schedule;
     copy_schedule_week (shifts::CopyWeekArgs) -> shifts::CopyWeekResult => shifts::copy_schedule_week;
+
+    create_category (catalog::CategoryInput) -> i64 => catalog::create_category;
+    update_category (catalog::UpdateCategoryArgs) -> () => catalog::update_category;
+    move_category (catalog::MoveArgs) -> () => catalog::move_category;
+    set_category_active (catalog::ActiveArgs) -> () => catalog::set_category_active;
+    delete_category (catalog::IdArgs) -> () => catalog::delete_category;
+    create_product (catalog::ProductInput) -> i64 => catalog::create_product;
+    update_product (catalog::UpdateProductArgs) -> () => catalog::update_product;
 
     seed_demo_data -> () => crate::db::seed_demo_data;
 }

@@ -2,18 +2,20 @@
 -- (debug builds only) and automatically by the browser dev fallback.
 -- Prices are in IQD.
 
-INSERT INTO categories (id, name, name_ku, name_ar, color, display_order) VALUES
-    (1, 'Beverages', 'خواردنەوە', 'مشروبات', '#2d5a8f', 1),
-    (2, 'Snacks', 'سووکەخۆراک', 'وجبات خفيفة', '#94600c', 2),
-    (3, 'Dairy', 'شیرەمەنی', 'ألبان', '#5f4996', 3),
-    (4, 'Bakery', 'نانەوایی', 'مخبوزات', '#9a3f26', 4),
-    (5, 'Produce', 'میوە و سەوزە', 'خضار وفواكه', '#2f6b38', 5);
+INSERT INTO categories (id, name, name_ku, name_ar, color, display_order, icon_key, parent_id) VALUES
+    (1, 'Beverages', 'خواردنەوە', 'مشروبات', '#2d5a8f', 1, 'tabler:bottle', NULL),
+    (2, 'Snacks', 'سووکەخۆراک', 'وجبات خفيفة', '#94600c', 2, 'tabler:candy', NULL),
+    (3, 'Dairy', 'شیرەمەنی', 'ألبان', '#5f4996', 3, 'tabler:milk', NULL),
+    (4, 'Bakery', 'نانەوایی', 'مخبوزات', '#9a3f26', 4, 'tabler:baguette', NULL),
+    (5, 'Produce', 'میوە و سەوزە', 'خضار وفواكه', '#2f6b38', 5, 'tabler:apple', NULL),
+    (6, 'Soft drinks', 'خواردنەوەی گازی', 'مشروبات غازية', '#2d5a8f', 1, 'tabler:bottle', 1),
+    (7, 'Hot drinks', 'خواردنەوەی گەرم', 'مشروبات ساخنة', '#2d5a8f', 2, 'tabler:coffee', 1);
 
 INSERT INTO products (sku, name, category_id, barcode, cost_price, selling_price, stock_quantity, min_stock_level, unit) VALUES
-    ('BEV-001', 'Coca-Cola 330ml', 1, '5449000000996', 500, 750, 142, 24, 'piece'),
+    ('BEV-001', 'Coca-Cola 330ml', 6, '5449000000996', 500, 750, 142, 24, 'piece'),
     ('BEV-002', 'Mineral water 1.5L', 1, '6281006432108', 300, 500, 88, 24, 'piece'),
     ('BEV-003', 'Ayran 250ml', 1, '8690526012345', 500, 750, 9, 12, 'piece'),
-    ('BEV-004', 'Black tea 500g', 1, '8690000123401', 4500, 6000, 31, 6, 'piece'),
+    ('BEV-004', 'Black tea 500g', 7, '8690000123401', 4500, 6000, 31, 6, 'piece'),
     ('SNK-001', 'Potato chips salted', 2, '6281036111110', 650, 1000, 57, 12, 'piece'),
     ('SNK-002', 'Roasted pistachios 200g', 2, '6260001234567', 3750, 5000, 4, 8, 'piece'),
     ('SNK-003', 'Dark chocolate bar', 2, '7622300489434', 1400, 2000, 40, 10, 'piece'),

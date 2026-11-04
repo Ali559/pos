@@ -22,6 +22,8 @@ import {
 } from "@/db/catalog";
 import { formatCurrency } from "@/lib/format";
 import { categoryInk, categoryTint } from "@/lib/categoryColor";
+import AppIcon from "@/components/icons/AppIcon.vue";
+import ProductThumb from "@/components/catalog/ProductThumb.vue";
 import { useShop } from "@/stores/shop";
 import { localized } from "@/utils/i18n";
 
@@ -47,16 +49,30 @@ const categories = ref<Category[]>([]);
 const products = ref<Product[]>([]);
 const catalogLoaded = ref(false);
 const activeCategory = ref<number | null>(null);
+const activeSub = ref<number | null>(null);
 const payment = ref<"cash" | "card">("cash");
 const lastAdded = ref<number | null>(null);
 const receiptNo = ref(1042);
 const cartItems = ref<CartItem[]>([]);
 
 // Computed
-const visibleProducts = computed(() =>
+const roots = computed(() => categories.value.filter((c) => c.parent_id === null));
+const subcategories = computed(() =>
   activeCategory.value === null
-    ? products.value
-    : products.value.filter((p) => p.categoryId === activeCategory.value),
+    ? []
+    : categories.value.filter((c) => c.parent_id === activeCategory.value),
+);
+const pickCategory = (id: number | null) => {
+  activeCategory.value = id;
+  activeSub.value = null;
+};
+
+const visibleProducts = computed(() =>
+  activeSub.value !== null
+    ? products.value.filter((p) => p.categoryId === activeSub.value)
+    : activeCategory.value !== null
+      ? products.value.filter((p) => p.rootCategoryId === activeCategory.value)
+      : products.value,
 );
 
 const qtyInCart = (id: number) =>
@@ -79,7 +95,7 @@ const addProduct = (p: Product) => {
   const existing = cartItems.value.find((i) => i.id === p.id);
   if (existing) existing.quantity++;
   else
-    cartItems.value.push({ id: p.id, name: p.name, price: p.price, quantity: 1 });
+    cartItems.value.push({ id: p.id, name: localized(p, "name"), price: p.price, quantity: 1 });
   lastAdded.value = p.id;
   setTimeout(() => {
     if (lastAdded.value === p.id) lastAdded.value = null;
@@ -181,31 +197,55 @@ onMounted(async () => {
         </p>
       </form>
 
-      <div class="flex flex-wrap gap-2" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          :aria-selected="activeCategory === null"
-          @click="activeCategory = null"
-          class="h-9 rounded-full border px-4 text-sm font-medium transition-colors hover:border-foreground/30 aria-selected:border-foreground aria-selected:bg-foreground aria-selected:text-background"
+      <div class="space-y-2">
+        <div class="flex flex-wrap gap-2" role="tablist" :aria-label="$t('inventory.table.category')">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="activeCategory === null"
+            @click="pickCategory(null)"
+            class="h-10 rounded-full border px-4 text-sm font-medium transition-colors hover:border-foreground/30 aria-selected:border-foreground aria-selected:bg-foreground aria-selected:text-background"
+          >
+            {{ $t("pos.allCategories") }}
+          </button>
+          <button
+            v-for="c in roots"
+            :key="c.id"
+            type="button"
+            role="tab"
+            :aria-selected="activeCategory === c.id"
+            @click="pickCategory(c.id)"
+            class="flex h-10 items-center gap-2 rounded-full border ps-2 pe-4 text-sm font-medium transition-colors hover:border-foreground/30 aria-selected:border-foreground aria-selected:bg-foreground aria-selected:text-background"
+          >
+            <span
+              class="grid size-7 place-items-center rounded-full"
+              :style="{ background: categoryTint(c.color), color: categoryInk(c.color) }"
+            >
+              <AppIcon :icon="c.icon_key" :size="16" />
+            </span>
+            {{ localized(c, "name") }}
+          </button>
+        </div>
+        <!-- Second row: the chosen category's subcategories -->
+        <div
+          v-if="subcategories.length"
+          class="flex flex-wrap gap-2 border-s-2 ps-3"
+          role="tablist"
+          :style="{ borderColor: categoryInk(roots.find((r) => r.id === activeCategory)?.color ?? null) }"
         >
-          {{ $t("pos.allCategories") }}
-        </button>
-        <button
-          v-for="c in categories"
-          :key="c.id"
-          type="button"
-          role="tab"
-          :aria-selected="activeCategory === c.id"
-          @click="activeCategory = c.id"
-          class="flex h-9 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors hover:border-foreground/30 aria-selected:border-foreground aria-selected:bg-foreground aria-selected:text-background"
-        >
-          <span
-            class="size-2.5 rounded-full"
-            :style="{ background: categoryInk(c.color) }"
-          />
-          {{ localized(c, "name") }}
-        </button>
+          <button
+            v-for="c in subcategories"
+            :key="c.id"
+            type="button"
+            role="tab"
+            :aria-selected="activeSub === c.id"
+            @click="activeSub = activeSub === c.id ? null : c.id"
+            class="flex h-8 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-colors hover:border-foreground/30 aria-selected:border-foreground aria-selected:bg-foreground aria-selected:text-background"
+          >
+            <AppIcon :icon="c.icon_key" :size="14" />
+            {{ localized(c, "name") }}
+          </button>
+        </div>
       </div>
 
       <p
@@ -222,7 +262,7 @@ onMounted(async () => {
             type="button"
             @click="addProduct(p)"
             :disabled="stockState(p) === 'out'"
-            class="relative flex h-32 w-full flex-col rounded-xl p-3.5 text-start transition-[transform,box-shadow] hover:ring-2 hover:ring-foreground/15 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+            class="relative flex h-40 w-full flex-col gap-2 rounded-xl p-3 text-start transition-[transform,box-shadow] hover:ring-2 hover:ring-foreground/15 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
             :style="{
               background: categoryTint(p.categoryColor),
               color: categoryInk(p.categoryColor),
@@ -233,9 +273,10 @@ onMounted(async () => {
               class="num absolute end-2.5 top-2.5 grid h-6 min-w-6 place-items-center rounded-full bg-foreground px-1.5 text-xs font-semibold text-background"
               >{{ qtyInCart(p.id) }}</span
             >
+            <ProductThumb :product="p" :size="44" class="bg-card/60!" />
             <span
-              class="line-clamp-2 pe-7 text-[15px] leading-snug font-semibold text-foreground"
-              ><bdi>{{ p.name }}</bdi></span
+              class="line-clamp-2 text-[15px] leading-snug font-semibold text-foreground"
+              ><bdi>{{ localized(p, "name") }}</bdi></span
             >
             <span class="mt-auto flex items-end justify-between gap-2">
               <span class="text-lg font-semibold text-foreground">{{

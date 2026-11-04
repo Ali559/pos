@@ -191,7 +191,22 @@ CREATE TABLE shifts (                -- what actually happened
 
 ---
 
-## 3. Catalog ⬜
+## 3. Catalog ✅
+
+Done 2026-11-04; see ARCHITECTURE.md → Catalog and icons.
+
+**How it differs from the sketch below**
+- Products keep one required `name` plus optional `name_ku` / `name_ar` (answers the "product names" open question).
+- Categories and products live in Inventory as two tabs (Products, Categories).
+- Reordering uses move up/down buttons rather than drag-and-drop: keyboard-accessible and reliable on touch tills.
+- Categories in use are archived rather than deleted.
+- Only Tabler is bundled (4,300 icons after dropping brand logos and crossed-out variants); the key format allows adding Phosphor or Material later.
+- The synonym map starts at ~60 groups (several hundred words), validated so every keyword hits a real icon, rather than 500 words.
+
+**Left for later**
+- ⬜ Category image upload (`categories.image_media_id` exists; no UI).
+- ⬜ Stock adjustments after creation (`inventory.adjust_stock`; FEATURES.md → Stock).
+- ⬜ Media cleanup for photos removed from products (files and rows stay).
 
 ### 3.1 Categories and subcategories
 - `categories.parent_id` already exists; limit depth to two levels (category → subcategory) in the UI.
@@ -325,6 +340,5 @@ CREATE TABLE expenses (
 ## Open questions
 
 - **Currency:** IQD only, or IQD + USD with an exchange rate? Until decided, Phase 1 stores one shop currency in `shop_profile.currency` (default `IQD`) and every price is formatted through `src/lib/format.ts`, so a second currency can be added later without touching views.
-- **Product names:** do products need all three languages, or one name plus an optional translation?
 - **Shifts:** is a scheduled rota needed, or only clock-in/out?
 - **Wages:** should employee performance include labour cost (sales per wage-hour)?

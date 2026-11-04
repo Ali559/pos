@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import EditSheet from "./EditSheet.vue";
+import EditSheet from "@/components/EditSheet.vue";
 import { listEmployees, listSchedules, type Employee, type Schedule } from "@/db/staff";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
