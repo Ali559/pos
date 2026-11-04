@@ -39,6 +39,9 @@ pub enum Error {
     /// A business rule refused the action; the code says which one
     #[error("{0}")]
     Rule(&'static str),
+    /// Same, naming the thing it's about (e.g. which product is short)
+    #[error("{0}: {1}")]
+    RuleAbout(&'static str, String),
 }
 
 impl Error {
@@ -49,7 +52,7 @@ impl Error {
             Error::Forbidden(_) => "forbidden",
             Error::BadCredentials => "bad_credentials",
             Error::NotFound => "not_found",
-            Error::Rule(code) => code,
+            Error::Rule(code) | Error::RuleAbout(code, _) => code,
             Error::Image(_) | Error::Blurhash => "bad_image",
             _ => "internal",
         }
@@ -62,7 +65,7 @@ impl Serialize for Error {
         s.serialize_field("code", self.code())?;
         s.serialize_field("message", &self.to_string())?;
         match self {
-            Error::Forbidden(permission) => s.serialize_field("detail", permission)?,
+            Error::Forbidden(detail) | Error::RuleAbout(_, detail) => s.serialize_field("detail", detail)?,
             _ => s.skip_field("detail")?,
         }
         s.end()

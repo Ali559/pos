@@ -49,6 +49,12 @@ export const router = createRouter({
           component: () => import("@/views/AnalyticsView.vue"),
         },
         {
+          path: "expenses",
+          name: "Expenses",
+          meta: { titleKey: "sidebar.expenses", permission: "expenses.view" },
+          component: () => import("@/views/ExpensesView.vue"),
+        },
+        {
           path: "staff",
           name: "Staff",
           meta: { titleKey: "sidebar.staff", permission: "staff.view" },

@@ -21,6 +21,7 @@ import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
 import type { ShopProfile } from "@/db/shop";
 import type { MediaFile } from "@/lib/media";
+import { getSetting, setSetting } from "@/db/settings";
 
 const { t } = useI18n();
 const { theme } = useTheme();
@@ -49,6 +50,23 @@ const saveTax = async () => {
     flash(taxSaved);
   } catch (e) {
     taxError.value = errorMessage(e);
+  }
+};
+
+// Alerts
+const warnDays = ref(7);
+const osAlerts = ref(true);
+const alertsSaved = ref(false);
+const alertsError = ref("");
+const saveAlerts = async () => {
+  alertsError.value = "";
+  try {
+    await setSetting("expiry_warn_days", String(Math.max(0, Math.min(90, Math.round(warnDays.value)))));
+    await setSetting("os_notifications", osAlerts.value ? "1" : "0");
+    await call("refresh_notifications");
+    flash(alertsSaved);
+  } catch (e) {
+    alertsError.value = errorMessage(e);
   }
 };
 
@@ -98,6 +116,8 @@ onMounted(async () => {
   await shop.load();
   taxDraft.value = shop.taxRate.value;
   resetShopForm();
+  warnDays.value = Number(await getSetting("expiry_warn_days")) || 7;
+  osAlerts.value = (await getSetting("os_notifications")) !== "0";
 });
 </script>
 
@@ -154,6 +174,33 @@ onMounted(async () => {
               </Button>
               <span v-if="taxSaved" class="pb-2.5 text-sm text-success">{{ $t("common.saved") }}</span>
               <span v-if="taxError" role="alert" class="pb-2.5 text-sm text-destructive">{{ taxError }}</span>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card v-if="canSystem">
+          <CardHeader>
+            <CardTitle>{{ $t("settings.alerts.title") }}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form class="space-y-4" @submit.prevent="saveAlerts">
+              <div class="space-y-2">
+                <Label for="warnDays">{{ $t("settings.alerts.warnDays") }}</Label>
+                <Input id="warnDays" v-model.number="warnDays" type="number" min="0" max="90" dir="ltr" class="w-28" />
+                <p class="text-xs text-muted-foreground">{{ $t("settings.alerts.warnDaysHint") }}</p>
+              </div>
+              <label class="flex items-center gap-3 text-sm">
+                <input v-model="osAlerts" type="checkbox" class="size-4 accent-primary" />
+                <span>
+                  <span class="font-medium">{{ $t("settings.alerts.os") }}</span>
+                  <span class="block text-muted-foreground">{{ $t("settings.alerts.osHint") }}</span>
+                </span>
+              </label>
+              <div class="flex items-center gap-3">
+                <Button type="submit">{{ $t("common.save") }}</Button>
+                <span v-if="alertsSaved" class="text-sm text-success">{{ $t("common.saved") }}</span>
+                <span v-if="alertsError" role="alert" class="text-sm text-destructive">{{ alertsError }}</span>
+              </div>
             </form>
           </CardContent>
         </Card>

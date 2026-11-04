@@ -8,6 +8,7 @@ import {
   ScanBarcode,
   Settings,
   UsersRound,
+  Wallet,
 } from "lucide-vue-next";
 import { useRoute, useRouter } from "vue-router";
 import {
@@ -29,6 +30,7 @@ const meta = {
   "/main/point-of-sale": { icon: ScanBarcode, key: "sidebar.pointOfSale" },
   "/main/inventory": { icon: Package, key: "sidebar.inventory" },
   "/main/analytics": { icon: ChartColumn, key: "sidebar.analytics" },
+  "/main/expenses": { icon: Wallet, key: "sidebar.expenses" },
   "/main/staff": { icon: UsersRound, key: "sidebar.staff" },
   "/main/settings": { icon: Settings, key: "sidebar.settings" },
 } as const;

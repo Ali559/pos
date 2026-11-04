@@ -4,7 +4,9 @@ import { useI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
 import {
   Banknote,
+  Check,
   CreditCard,
+  Loader2,
   Minus,
   PauseCircle,
   Plus,
@@ -26,6 +28,8 @@ import AppIcon from "@/components/icons/AppIcon.vue";
 import ProductThumb from "@/components/catalog/ProductThumb.vue";
 import { useShop } from "@/stores/shop";
 import { localized } from "@/utils/i18n";
+import { call } from "@/lib/ipc";
+import { errorMessage } from "@/lib/errors";
 
 interface CartItem {
   id: number;
@@ -52,7 +56,10 @@ const activeCategory = ref<number | null>(null);
 const activeSub = ref<number | null>(null);
 const payment = ref<"cash" | "card">("cash");
 const lastAdded = ref<number | null>(null);
-const receiptNo = ref(1042);
+// The last completed sale, shown on the empty receipt until the next scan
+const lastSale = ref<{ receiptNumber: string; total: number } | null>(null);
+const charging = ref(false);
+const chargeError = ref("");
 const cartItems = ref<CartItem[]>([]);
 
 // Computed
@@ -92,8 +99,13 @@ const focusScan = () => nextTick(() => scanInput.value?.focus());
 
 const addProduct = (p: Product) => {
   if (stockState(p) === "out") return;
+  lastSale.value = null;
+  chargeError.value = "";
   const existing = cartItems.value.find((i) => i.id === p.id);
-  if (existing) existing.quantity++;
+  if (existing) {
+    if (existing.quantity + 1 > p.stock) return;
+    existing.quantity++;
+  }
   else
     cartItems.value.push({ id: p.id, name: localized(p, "name"), price: p.price, quantity: 1 });
   lastAdded.value = p.id;
@@ -115,9 +127,11 @@ const addItemByBarcode = async () => {
   barcode.value = "";
 };
 
+const stockOf = (id: number) => products.value.find((p) => p.id === id)?.stock ?? Infinity;
+
 const incrementQuantity = (id: number) => {
   const item = cartItems.value.find((i) => i.id === id);
-  if (item) item.quantity++;
+  if (item && item.quantity + 1 <= stockOf(id)) item.quantity++;
 };
 
 const decrementQuantity = (id: number) => {
@@ -135,11 +149,28 @@ const clearCart = () => {
   focusScan();
 };
 
-const checkout = () => {
-  // Implement checkout logic
-  console.log("Charging", payment.value, total.value, cartItems.value);
-  receiptNo.value++;
-  clearCart();
+const reloadProducts = async () => {
+  products.value = await listProducts();
+};
+
+// Rust recomputes prices from the database; only ids and quantities go over
+const checkout = async () => {
+  if (!cartItems.value.length || charging.value) return;
+  charging.value = true;
+  chargeError.value = "";
+  try {
+    const sale = await call<{ receiptNumber: string; total: number }>("checkout", {
+      lines: cartItems.value.map((i) => ({ productId: i.id, quantity: i.quantity })),
+      paymentMethod: payment.value,
+    });
+    lastSale.value = sale;
+    clearCart();
+    await reloadProducts();
+  } catch (e) {
+    chargeError.value = errorMessage(e);
+  } finally {
+    charging.value = false;
+  }
 };
 
 onMounted(async () => {
@@ -311,9 +342,7 @@ onMounted(async () => {
         <header class="px-5 pt-5 pb-3">
           <div class="flex items-baseline justify-between">
             <h2 class="text-base font-semibold">{{ $t("pos.receipt") }}</h2>
-            <span class="text-sm text-muted-foreground"
-              >#{{ receiptNo }}</span
-            >
+            <span class="text-sm text-muted-foreground">{{ $t("pos.newSale") }}</span>
           </div>
           <p class="text-sm text-muted-foreground">
             {{ $t("pos.items", itemCount) }}
@@ -323,7 +352,19 @@ onMounted(async () => {
 
         <ol class="min-h-0 flex-1 overflow-y-auto px-2 py-2">
           <li
-            v-if="cartItems.length === 0"
+            v-if="cartItems.length === 0 && lastSale"
+            class="flex h-full flex-col items-center justify-center gap-2 px-6 text-center"
+            role="status"
+          >
+            <span class="grid size-12 place-items-center rounded-full bg-success/12 text-success">
+              <Check :size="26" />
+            </span>
+            <span class="font-semibold">{{ $t("pos.saleDone") }}</span>
+            <span class="num text-sm text-muted-foreground" dir="ltr">{{ lastSale.receiptNumber }}</span>
+            <span class="text-2xl font-bold">{{ formatCurrency(lastSale.total) }}</span>
+          </li>
+          <li
+            v-else-if="cartItems.length === 0"
             class="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground"
           >
             {{ $t("pos.emptyCart") }}
@@ -420,14 +461,20 @@ onMounted(async () => {
         </label>
       </fieldset>
 
+      <p v-if="chargeError" role="alert" class="text-sm font-medium text-destructive">
+        {{ chargeError }}
+      </p>
       <Button
         variant="sun"
         size="xl"
         class="w-full justify-between"
-        :disabled="cartItems.length === 0"
+        :disabled="cartItems.length === 0 || charging"
         @click="checkout"
       >
-        <span>{{ $t("pos.charge") }}</span>
+        <span class="flex items-center gap-2">
+          <Loader2 v-if="charging" class="animate-spin" />
+          {{ $t("pos.charge") }}
+        </span>
         <span>{{ formatCurrency(total) }}</span>
       </Button>
 

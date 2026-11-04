@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, provide, watchEffect } from "vue";
+import { ConfigProvider } from "reka-ui";
 import {
   DEFAULT_LANGUAGE,
   i18n,
@@ -59,7 +60,11 @@ provide("setLanguage", setLanguage);
 </script>
 
 <template>
-  <div :dir="direction" :lang="language" class="fixed inset-0 overflow-auto">
-    <slot />
-  </div>
+  <!-- reka-ui stamps its own dir on popups (menus, selects, tabs) and
+       defaults to ltr; ConfigProvider hands it the real direction -->
+  <ConfigProvider :dir="direction">
+    <div :dir="direction" :lang="language" class="fixed inset-0 overflow-auto">
+      <slot />
+    </div>
+  </ConfigProvider>
 </template>

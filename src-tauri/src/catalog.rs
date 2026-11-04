@@ -265,6 +265,8 @@ pub struct ProductInput {
     pub is_active: bool,
     /// Create only; later changes go through stock adjustments
     pub initial_stock: Option<f64>,
+    /// Create only: expiry of the opening stock (YYYY-MM-DD)
+    pub initial_expiry: Option<String>,
 }
 
 /// Primary barcode first, then the extras; trimmed, de-duplicated.
@@ -364,6 +366,7 @@ pub async fn create_product(ctx: &Ctx, p: ProductInput) -> Result<i64> {
     let actor = auth::require(ctx, "inventory.edit").await?;
     let codes = validate_product(ctx, &p, None).await?;
     let stock = p.initial_stock.unwrap_or(0.0);
+    let expiry = trimmed(&p.initial_expiry).map(crate::stock::parse_date).transpose()?;
 
     let mut tx = ctx.pool.begin().await?;
     // A placeholder SKU keeps the NOT NULL UNIQUE column happy until we know the id
@@ -410,6 +413,7 @@ pub async fn create_product(ctx: &Ctx, p: ProductInput) -> Result<i64> {
         .bind(now())
         .execute(&mut *tx)
         .await?;
+        crate::stock::insert_batch(&mut tx, id, stock, expiry.as_deref(), Some(p.cost_price), Some("initial"), actor.user_id).await?;
     }
     tx.commit().await?;
     audit::log(ctx, Some(actor.user_id), "product.create", "products", Some(id), &serde_json::json!({ "name": p.name, "stock": stock })).await?;
@@ -490,6 +494,7 @@ mod tests {
             media_ids: vec![],
             is_active: true,
             initial_stock: Some(24.0),
+            initial_expiry: None,
         }
     }
 

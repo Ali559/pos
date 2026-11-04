@@ -6,6 +6,7 @@ import { useAuth } from "@/stores/auth";
 import { useShiftStatus } from "@/hooks/useShiftStatus";
 import MediaImage from "@/components/media/MediaImage.vue";
 import LanguageSwitcher from "../LanguageSwitcher.vue";
+import NotificationBell from "./NotificationBell.vue";
 
 defineProps<{ pageTitle: string }>();
 
@@ -49,6 +50,7 @@ const shift = useShiftStatus();
       </div>
       <span class="h-8 w-px bg-border" aria-hidden="true" />
       <span class="text-sm text-muted-foreground">{{ timeOfDay }}</span>
+      <NotificationBell />
       <LanguageSwitcher />
     </div>
   </header>

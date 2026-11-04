@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { watchDebounced } from "@vueuse/core";
-import { ChevronLeft, ChevronRight, Pencil, Plus, Search } from "lucide-vue-next";
+import { ChevronLeft, ChevronRight, PackagePlus, Pencil, Plus, Search } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -22,6 +22,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import CategoriesTab from "@/components/catalog/CategoriesTab.vue";
 import ProductSheet from "@/components/catalog/ProductSheet.vue";
 import ProductThumb from "@/components/catalog/ProductThumb.vue";
+import StockSheet from "@/components/catalog/StockSheet.vue";
+import { useRoute } from "vue-router";
 import {
   countProducts,
   listCategories,
@@ -37,9 +39,12 @@ import { localized } from "@/utils/i18n";
 const PAGE_SIZE = 10;
 const auth = useAuth();
 const canEdit = computed(() => auth.can("inventory.edit"));
+const canAdjust = computed(() => auth.can("inventory.adjust_stock"));
+const route = useRoute();
 
 const tab = ref("products");
-const search = ref("");
+// Alerts link here with ?q=<product name>
+const search = ref(typeof route.query.q === "string" ? route.query.q : "");
 const category = ref("all");
 const showInactive = ref(false);
 const page = ref(0);
@@ -105,6 +110,14 @@ const onSaved = async () => {
   await load();
   catalogSize.value = await countProducts({ includeInactive: true });
 };
+// Stock sheet
+const stockOpen = ref(false);
+const stockProduct = ref<Product | null>(null);
+const openStock = (p: Product) => {
+  stockProduct.value = p;
+  stockOpen.value = true;
+};
+
 const onCategoriesChanged = () => {
   loadCategories();
   load();
@@ -163,7 +176,7 @@ const onCategoriesChanged = () => {
                 <TableHead class="text-end">{{ $t("inventory.table.price") }}</TableHead>
                 <TableHead class="w-48">{{ $t("inventory.table.stock") }}</TableHead>
                 <TableHead>{{ $t("inventory.table.status") }}</TableHead>
-                <TableHead class="w-14 pe-5"
+                <TableHead class="w-24 pe-5"
                   ><span class="sr-only">{{ $t("inventory.table.actions") }}</span></TableHead
                 >
               </TableRow>
@@ -214,15 +227,27 @@ const onCategoriesChanged = () => {
                   </span>
                 </TableCell>
                 <TableCell class="pe-5">
-                  <Button
-                    v-if="canEdit"
-                    variant="ghost"
-                    size="icon-sm"
-                    :aria-label="$t('inventory.edit')"
-                    @click="openEditor(p.id)"
-                  >
-                    <Pencil />
-                  </Button>
+                  <div class="flex justify-end gap-0.5">
+                    <Button
+                      v-if="canAdjust"
+                      variant="ghost"
+                      size="icon-sm"
+                      :aria-label="$t('stock.title')"
+                      :title="$t('stock.title')"
+                      @click="openStock(p)"
+                    >
+                      <PackagePlus />
+                    </Button>
+                    <Button
+                      v-if="canEdit"
+                      variant="ghost"
+                      size="icon-sm"
+                      :aria-label="$t('inventory.edit')"
+                      @click="openEditor(p.id)"
+                    >
+                      <Pencil />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             </TableBody>
@@ -252,6 +277,7 @@ const onCategoriesChanged = () => {
       </TabsContent>
     </Tabs>
 
+    <StockSheet v-model:open="stockOpen" :product="stockProduct" @saved="load" />
     <ProductSheet
       v-model:open="sheetOpen"
       :product-id="editingId"

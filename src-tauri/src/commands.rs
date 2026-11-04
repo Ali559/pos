@@ -7,7 +7,7 @@ use tauri::AppHandle;
 
 use crate::ctx::Ctx;
 use crate::error::{Error, Result};
-use crate::{auth, catalog, query, settings, shifts, staff};
+use crate::{auth, catalog, expenses, export, notifications, query, sales, settings, shifts, staff, stock};
 
 macro_rules! commands {
     ($( $name:ident $( ($args:ty) )? -> $out:ty => $f:path; )*) => {
@@ -69,6 +69,24 @@ commands! {
     delete_category (catalog::IdArgs) -> () => catalog::delete_category;
     create_product (catalog::ProductInput) -> i64 => catalog::create_product;
     update_product (catalog::UpdateProductArgs) -> () => catalog::update_product;
+
+    checkout (sales::CheckoutArgs) -> sales::SaleResult => sales::checkout;
+    receive_stock (stock::ReceiveArgs) -> () => stock::receive_stock;
+    remove_stock (stock::RemoveArgs) -> () => stock::remove_stock;
+
+    refresh_notifications -> () => notifications::refresh_notifications;
+    mark_notifications_read (notifications::MarkReadArgs) -> () => notifications::mark_notifications_read;
+    dismiss_notification (notifications::IdArgs) -> () => notifications::dismiss_notification;
+
+    create_expense_type (expenses::ExpenseTypeInput) -> i64 => expenses::create_expense_type;
+    update_expense_type (expenses::UpdateTypeArgs) -> () => expenses::update_expense_type;
+    set_expense_type_active (expenses::ActiveArgs) -> () => expenses::set_expense_type_active;
+    create_expense (expenses::ExpenseInput) -> i64 => expenses::create_expense;
+    update_expense (expenses::UpdateExpenseArgs) -> () => expenses::update_expense;
+    confirm_expense (expenses::IdArgs) -> () => expenses::confirm_expense;
+    delete_expense (expenses::IdArgs) -> () => expenses::delete_expense;
+
+    authorize_export -> () => export::authorize_export;
 
     seed_demo_data -> () => crate::db::seed_demo_data;
 }

@@ -105,7 +105,7 @@ CREATE TABLE shop_profile (
 
 ---
 
-## 2. People ✅ (2.1–2.3)
+## 2. People ✅ (2.4 delivered with Phase 4)
 
 Done 2026-11-04; see ARCHITECTURE.md → Security model, Sign-in, sessions and shifts.
 
@@ -240,7 +240,26 @@ Done 2026-11-04; see ARCHITECTURE.md → Catalog and icons.
 
 ---
 
-## 4. Money ⬜
+## 4. Money ✅ (with 2.4)
+
+Done 2026-11-04; see ARCHITECTURE.md → Money.
+
+**Added because the rest depended on it**
+- Checkout that records sales (the Charge button was a stub, so there was nothing to analyse).
+- Receive stock / remove stock with batches, so expiry alerts point at stock that still exists; sales use the soonest-expiring batch first.
+
+**How it differs from the sketch below**
+- Alerts are reconciled by Rust (`notifications::refresh`) after each change and hourly rather than by SQL triggers: one code path, testable, and it handles expiry rolling over at midnight.
+- 2.4 Employee performance is the Employees tab of Analytics with the shared filters (sales, average sale, items per sale, hours from shifts, sales per hour) rather than a separate page.
+- Charts other than sales-over-time are plain bars (theme- and RTL-friendly) instead of Chart.js.
+- Expenses keep one currency (the shop's), like sales.
+
+**Left for later**
+- ⬜ Returns and refunds (`returns` tables exist; `sales.refund` permission exists).
+- ⬜ Discounts and removing lines with permission checks, manager override.
+- ⬜ Cash tendered / change due, end-of-shift cash count (`cash_drawers`).
+- ⬜ Receipt printing.
+- ⬜ Selling expired batches is allowed (they're used first); blocking it at the till is a shop decision.
 
 ### 4.1 Notifications
 ```sql

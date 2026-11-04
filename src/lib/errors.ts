@@ -17,7 +17,9 @@ export const errorMessage = (e: unknown): string => {
     if (e.code === "forbidden" && e.detail) {
       return t("errors.forbidden", { permission: t(`permissions.${e.detail}`) });
     }
-    if (te(`errors.${e.code}`)) return t(`errors.${e.code}`);
+    // `detail` names what the rule is about, e.g. which product is short
+    // (isolated so an English name reads correctly inside RTL text)
+    if (te(`errors.${e.code}`)) return t(`errors.${e.code}`, { detail: `\u2068${e.detail ?? ""}\u2069` });
     return e.message;
   }
   if (e instanceof Error) return e.message;

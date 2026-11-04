@@ -35,7 +35,7 @@ const blank = () => ({
   name: "", name_ku: "", name_ar: "", sku: "", categoryId: "none",
   barcode: "", extraBarcodes: [] as string[], costPrice: "", sellingPrice: "",
   minStock: "0", unit: "piece" as string, iconKey: null as string | null,
-  isActive: true, initialStock: "0", stock: 0,
+  isActive: true, initialStock: "0", initialExpiry: "", stock: 0,
 });
 
 const form = ref(blank());
@@ -70,6 +70,7 @@ watch(open, async (isOpen) => {
     iconKey: p.icon_key,
     isActive: !!p.is_active,
     initialStock: "0",
+    initialExpiry: "",
     stock: p.stock_quantity,
   };
   images.value = p.media;
@@ -112,6 +113,7 @@ const save = async () => {
     mediaIds: images.value.map((m) => m.id),
     isActive: f.isActive,
     initialStock: props.productId === null ? Number(f.initialStock) || 0 : null,
+    initialExpiry: props.productId === null && f.initialExpiry ? f.initialExpiry : null,
   };
   saving.value = true;
   error.value = "";
@@ -245,6 +247,13 @@ const save = async () => {
         <div v-if="productId === null" class="space-y-2">
           <Label for="p-stock">{{ $t("catalog.initialStock") }}</Label>
           <Input id="p-stock" v-model="form.initialStock" type="number" min="0" step="any" dir="ltr" />
+        </div>
+        <div v-if="productId === null" class="space-y-2">
+          <Label for="p-expiry">
+            {{ $t("stock.expiry") }}
+            <span class="font-normal text-muted-foreground">({{ $t("common.optional") }})</span>
+          </Label>
+          <Input id="p-expiry" v-model="form.initialExpiry" type="date" dir="ltr" />
         </div>
         <div v-else class="space-y-2">
           <Label>{{ $t("catalog.currentStock") }}</Label>

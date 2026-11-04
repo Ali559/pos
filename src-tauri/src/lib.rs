@@ -1,5 +1,6 @@
 mod audit;
 mod auth;
+mod background;
 #[cfg(debug_assertions)]
 mod bridge;
 mod catalog;
@@ -7,11 +8,16 @@ mod commands;
 mod ctx;
 mod db;
 mod error;
+mod expenses;
+mod export;
 mod media;
+mod notifications;
 mod query;
+mod sales;
 mod settings;
 mod shifts;
 mod staff;
+mod stock;
 
 use std::sync::Arc;
 
@@ -26,9 +32,12 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(Arc::new(ctx::SessionState::default()))
         .setup(|app| {
             app.manage(db::open_read_pool(app.handle())?);
+            background::start(app.handle().clone());
             #[cfg(debug_assertions)]
             bridge::start(app.handle().clone());
             Ok(())
@@ -36,6 +45,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             media::upload_media,
             media::get_media_dir,
+            export::save_csv,
             commands::select,
             commands::auth_status,
             commands::complete_setup,
@@ -60,6 +70,20 @@ pub fn run() {
             commands::delete_category,
             commands::create_product,
             commands::update_product,
+            commands::checkout,
+            commands::receive_stock,
+            commands::remove_stock,
+            commands::refresh_notifications,
+            commands::mark_notifications_read,
+            commands::dismiss_notification,
+            commands::create_expense_type,
+            commands::update_expense_type,
+            commands::set_expense_type_active,
+            commands::create_expense,
+            commands::update_expense,
+            commands::confirm_expense,
+            commands::delete_expense,
+            commands::authorize_export,
             commands::seed_demo_data,
         ])
         .run(tauri::generate_context!())

@@ -26,6 +26,9 @@ impl SessionState {
     }
 }
 
+/// Shows a system notification (title, body). Absent in tests.
+pub type Notifier = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
 /// Everything a command needs, without Tauri types, so command logic can be
 /// unit tested against an in-memory database and reused by the dev bridge.
 pub struct Ctx {
@@ -35,6 +38,7 @@ pub struct Ctx {
     pub read_pool: SqlitePool,
     pub session: Arc<SessionState>,
     pub media_dir: PathBuf,
+    pub notifier: Option<Notifier>,
 }
 
 impl Ctx {
@@ -44,8 +48,18 @@ impl Ctx {
             read_pool: app.state::<db::ReadPool>().0.clone(),
             session: app.state::<Arc<SessionState>>().inner().clone(),
             media_dir: media::media_dir(app)?,
+            notifier: Some(os_notifier(app.clone())),
         })
     }
+}
+
+fn os_notifier<R: Runtime>(app: AppHandle<R>) -> Notifier {
+    use tauri_plugin_notification::NotificationExt;
+    Arc::new(move |title: &str, body: &str| {
+        if let Err(e) = app.notification().builder().title(title).body(body).show() {
+            eprintln!("[notify] {e}");
+        }
+    })
 }
 
 /// Current time as an RFC 3339 UTC string ("2026-11-04T15:00:00Z"), the
@@ -78,6 +92,7 @@ pub mod test_support {
             pool,
             session: Arc::new(SessionState::default()),
             media_dir,
+            notifier: None,
         }
     }
 
@@ -102,6 +117,7 @@ pub mod test_support {
             read_pool,
             session: Arc::new(SessionState::default()),
             media_dir: dir,
+            notifier: None,
         }
     }
 }

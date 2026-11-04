@@ -2,7 +2,7 @@
 
 A desktop point-of-sale app for small shops. It runs offline on the till machine as a native window (Tauri), with a Vue 3 front end and a local SQLite database. The interface is trilingual: Kurdish Sorani (default, right-to-left), Arabic (right-to-left), and English (left-to-right).
 
-> Status: Phases 1–3 of `PLAN.md` are in: SQLite data layer, three languages, Rust media pipeline, shop profile, real sign-in (password or PIN), dynamic roles and permissions enforced in Rust, employees, shifts and schedules, a two-level category tree with icons, and a full product editor with photos, icons and barcodes. Checkout and stock adjustments are still stubs, and analytics still shows sample numbers. `FEATURES.md` is the wider backlog.
+> Status: all four phases of `PLAN.md` are in: SQLite data layer, three languages, Rust media pipeline, shop profile, sign-in (password or PIN), dynamic roles enforced in Rust, employees, shifts and schedules, the category tree and product editor with an offline icon library, checkout, stock batches with expiry, alerts, expenses, and analytics with CSV export. Returns/refunds, receipt printing, discounts and the end-of-shift cash count are not built yet (`PLAN.md` → Left for later, `FEATURES.md`). `FEATURES.md` is the wider backlog.
 
 ## Stack
 
@@ -42,13 +42,16 @@ pos/
 │   │   ├── LoginView.vue         Password or PIN (on-screen keypad)
 │   │   ├── SalesView.vue         The register
 │   │   ├── InventoryView.vue
-│   │   ├── AnalyticsView.vue     (sample data until Phase 4)
+│   │   ├── AnalyticsView.vue     Filter bar (in the route), Overview / Products / Employees / Profit
+│   │   ├── ExpensesView.vue      Expenses and expense types
 │   │   ├── StaffView.vue         Employees, Schedule, Roles tabs
 │   │   └── SettingsView.vue      General (theme, tax, sample data), Shop
 │   ├── components/
-│   │   ├── menus/                Sidebar.vue (nav rail filtered by permission, user menu), Header.vue (shop, user, shift)
+│   │   ├── menus/                Sidebar (nav rail by permission, user menu), Header (shop, user, shift), NotificationBell
 │   │   ├── EditSheet.vue         Side panel used by every create/edit form
-│   │   ├── catalog/              CategoriesTab, ProductSheet (editor), ProductThumb
+│   │   ├── catalog/              CategoriesTab, ProductSheet (editor), ProductThumb, StockSheet (receive/remove, batches)
+│   │   ├── expenses/             ExpensesTab, ExpenseTypesTab
+│   │   ├── reports/RangePicker.vue  Date presets + custom range, shared by Expenses and Analytics
 │   │   ├── icons/                AppIcon (renders "tabler:…" keys), IconPicker (suggest + browse)
 │   │   ├── staff/                EmployeesTab, RolesTab, ScheduleTab
 │   │   ├── shop/                 ShopForm, LogoField
@@ -58,7 +61,8 @@ pos/
 │   │   └── ui/                   shadcn-vue primitives
 │   ├── db/                       Read queries only (SQL lives here, never in views)
 │   │   ├── client.ts             select()/selectOne() → Rust `select` command
-│   │   ├── catalog.ts, settings.ts, shop.ts, staff.ts
+│   │   ├── catalog.ts, settings.ts, shop.ts, staff.ts, stock.ts, expenses.ts, notifications.ts
+│   │   └── analytics.ts          Report queries over sale lines (local-time buckets)
 │   ├── stores/
 │   │   ├── auth.ts               Session mirror, can(), login/logout, MAIN_ROUTES, landingPath()
 │   │   └── shop.ts               Shop profile, currency, tax rate
@@ -69,6 +73,8 @@ pos/
 │   │   ├── format.ts, locale.ts  Money, dates, times; Kurdish fallbacks
 │   │   ├── media.ts              uploadMedia(), mediaUrl()
 │   │   ├── icons.ts              Lazy icon set + index, suggestIcons(), searchIcons(), recent icons
+│   │   ├── dateRange.ts          Presets, previous period, local-date / UTC conversions
+│   │   ├── exportCsv.ts          Export via Rust save dialog (or a download in the browser preview)
 │   │   ├── iconSearch.ts         Pure tokenize/normalize/score (tested with bun)
 │   │   └── categoryColor.ts, utils.ts
 │   ├── data/
@@ -78,7 +84,7 @@ pos/
 ├── scripts/build-icon-index.mjs  Regenerates icon-index.json from @tabler/icons metadata
 ├── tests/                        bun tests (icon suggestions)
 └── src-tauri/
-    ├── migrations/               0001_init, 0002_shop_media_i18n, 0003_people, 0004_catalog
+    ├── migrations/               0001_init … 0005_money
     ├── seeds/demo.sql            Sample catalog (IQD), debug builds only
     ├── src/lib.rs                Builder: sql plugin + migrations, read pool, session, commands
     ├── src/commands.rs           The command list → #[tauri::command]s + dispatch() for the bridge
@@ -86,6 +92,12 @@ pos/
     ├── src/auth.rs               Hashing, sessions, require(permission), setup, login, shifts on sign-in
     ├── src/staff.rs              Roles and employees, anti-escalation rules
     ├── src/catalog.rs            Categories (tree, order, archive) and products (barcodes, photos, initial stock)
+    ├── src/sales.rs              Checkout (prices from the database, stock check, receipt number)
+    ├── src/stock.rs              Batches, receive/remove stock, soonest-expiry-first consumption
+    ├── src/notifications.rs      Alert reconciliation, OS notifications
+    ├── src/expenses.rs           Expenses, types, recurring drafts
+    ├── src/export.rs             CSV with BOM; Rust opens the save dialog
+    ├── src/background.rs         Hourly: recurring drafts + alert refresh
     ├── src/shifts.rs             Clock in/out, schedules, copy week
     ├── src/settings.rs           Settings keys and shop profile writes
     ├── src/query.rs              Read-only `select` for the WebView
@@ -149,7 +161,7 @@ Chromium (and so WebView2 on Windows) has no Sorani locale data. `src/lib/locale
 
 vue-i18n splits message keys on dots, so permission labels are nested (`permissions.sales.refund` → `permissions: { sales: { refund } }`).
 
-Layout uses logical utilities (`ms-*`, `start-0`, `text-start`, `border-s`) so it mirrors automatically. Side panels open from the reading end. Wrap data that may be in another script in `<bdi>`.
+Layout uses logical utilities (`ms-*`, `start-0`, `text-start`, `border-s`) so it mirrors automatically. Side panels open from the reading end. Wrap data that may be in another script in `<bdi>`; inside a translated sentence, wrap interpolated values in Unicode isolates (`\u2068…\u2069`) instead, as the alert and error messages do. reka-ui gets the direction from a `ConfigProvider` in `LocaleProvider`; without it, its menus and selects render left-to-right.
 
 ## Styling and theming
 
@@ -195,6 +207,15 @@ Seeded roles: **Owner** (system role, implicitly every permission, can't be edit
 - **Icons**: icon keys are `"<set>:<name>"` (today only `tabler:`). The drawing data (~2 MB) and the tag index (~450 KB) are lazy chunks loaded in the background at startup; `AppIcon` keeps its box until they arrive. `@iconify/vue/offline` never calls the Iconify API.
 - **Suggestions** (`lib/iconSearch.ts`): the name, in any of the three languages, is tokenized (sizes like `330ml` and the Arabic `ال` dropped, letter variants such as ي/ی and ك/ک folded). Tokens are mapped to English keywords through `iconSynonyms.ts` by prefix, so Kurdish suffixes still match, and icons are scored on name and tag matches. The parent category's icon category breaks ties. Loose prefix-only matches are dropped when there are three or more solid ones. Grow `iconSynonyms.ts` when shops name things it misses; `bun test` checks a set of real names.
 
+## Money: sales, stock, alerts, expenses, reports
+
+- **Checkout** (`sales.rs`) receives product ids, quantities and the payment method; prices, costs, tax and stock come from the database. It refuses inactive products, fractional quantities of piece/pack/box items, and more than is on hand (naming the product). One transaction writes `sales` (with the cashier's open `shift_id`), `sale_items` (snapshotting name, price and cost), and `payments`. The existing trigger lowers stock and logs the movement. Receipt numbers are `R-000123`. IQD totals are rounded to whole dinars.
+- **Batches** (`product_batches`): receiving stock adds a batch with optional expiry and cost; product creation records its opening stock as one. Sales and removals take from the soonest-expiring batch first. Stock older than batches is simply untracked for expiry; `products.stock_quantity` stays the count.
+- **Alerts** (`notifications.rs`): `refresh` recomputes every condition from the data — low stock (≤ reorder level), out of stock, batches expiring within `expiry_warn_days` (default 7) or expired, recurring-expense drafts — and reconciles the table: one open row per condition, closed (`resolved_at`) when it stops being true, hidden (`dismissed_at`) if dismissed. It runs after every stock change, at startup and hourly (`background.rs`). New out-of-stock and expired alerts also become OS notifications (`os_notifications` setting), in the UI language. The bell shows only kinds the user can act on.
+- **Expenses**: types with icons; amounts on local dates. A *repeating* expense is a template that produces a draft each week/month after its date; drafts appear as alerts and on the Expenses screen to confirm, edit or skip.
+- **Analytics** (`db/analytics.ts`) works from sale lines, so later product edits never change history. Buckets and the busiest-hours heatmap use the till's local time (`'localtime'`); weeks start Saturday. The compare toggle uses the same-length period just before. Hours worked come from shifts, clipped to the range. Net profit = gross margin − confirmed expenses, shown only without staff/category/payment filters. The filter bar lives in the route query.
+- **Export**: `save_csv` checks `analytics.export`, opens the save dialog in Rust (the WebView never supplies a path), and writes UTF-8 with a BOM so Excel shows Kurdish and Arabic.
+
 ## Developing in a browser: the dev bridge
 
 `bun run tauri dev` also starts `bridge.rs` on `127.0.0.1:1430` (debug builds only; not compiled into release). Vite proxies `/__bridge/*` to it. A normal browser tab on `http://localhost:1420` then calls the same Rust commands on the same database and session as the app window (`lib/ipc.ts` picks the route automatically). The bridge only answers requests with an `x-pos-bridge: 1` header from that origin. Plain GETs of `/media/*` are allowed for `<img>` tags. This is how the UI is checked end to end without driving the native window.
@@ -217,9 +238,9 @@ bun install                  # install JS deps
 bun run tauri dev            # desktop app + dev bridge (needs ports 1420 and 1430 free)
 bun run build                # type-check (vue-tsc) and build the web bundle
 bun run test                 # icon suggestion/search tests
-cd src-tauri && cargo test   # auth, RBAC, shifts, catalog, settings, read-only select, media, migrations
+cd src-tauri && cargo test   # auth, RBAC, shifts, catalog, checkout, batches, alerts, expenses, export, media, migrations
 bun run icons:index          # rebuild src/data/icon-index.json after upgrading the icon packages
 bun run tauri build          # native installer
 ```
 
-With the app running, open http://localhost:1420 in a browser to use the UI there. In a debug build, Settings → General → *Load sample data* fills an empty catalog.
+With the app running, open http://localhost:1420 in a browser to use the UI there. In a debug build, Settings → General → *Load sample data* fills an empty catalog and adds ~60 days of sales by three people, their shifts and some expenses, so analytics has something to show. The two sample cashiers get random passwords.

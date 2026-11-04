@@ -24,6 +24,20 @@ pub async fn set_setting(ctx: &Ctx, args: SetSettingArgs) -> Result<()> {
             }
             None
         }
+        "expiry_warn_days" => {
+            let actor = auth::require(ctx, "settings.system").await?;
+            match args.value.parse::<u32>() {
+                Ok(v) if v <= 90 => Some(actor),
+                _ => return Err(Error::Invalid("expiry_warn_days must be 0–90".into())),
+            }
+        }
+        "os_notifications" => {
+            let actor = auth::require(ctx, "settings.system").await?;
+            if !matches!(args.value.as_str(), "0" | "1") {
+                return Err(Error::Invalid("os_notifications must be 0 or 1".into()));
+            }
+            Some(actor)
+        }
         "tax_rate" => {
             let actor = auth::require(ctx, "settings.system").await?;
             match args.value.parse::<f64>() {

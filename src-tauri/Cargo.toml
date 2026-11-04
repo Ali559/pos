@@ -33,7 +33,10 @@ thiserror = "2"
 argon2 = { version = "0.5", features = ["std"] }
 chrono = "0.4"
 tiny_http = "0.12"
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "time"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+csv = "1"
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
