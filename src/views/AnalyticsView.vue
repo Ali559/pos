@@ -49,7 +49,6 @@ import { errorMessage } from "@/lib/errors";
 import { exportCsv } from "@/lib/exportCsv";
 import { formatCurrency } from "@/lib/format";
 import { useAuth } from "@/stores/auth";
-import { localized } from "@/utils/i18n";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -271,7 +270,7 @@ const doExport = async (name: string, rows: (string | number | null)[][]) => {
 const exportProducts = () =>
   doExport("products", [
     [t("inventory.table.name"), t("analytics.table.quantity"), t("analytics.kpi.revenue"), t("analytics.kpi.grossMargin")],
-    ...products.value.map((p) => [localized(p, "name"), p.quantity, p.revenue, p.margin]),
+    ...products.value.map((p) => [p.name, p.quantity, p.revenue, p.margin]),
   ]);
 const exportEmployees = () =>
   doExport("employees", [
@@ -286,7 +285,7 @@ const exportSeries = () =>
 const exportExpenses = () =>
   doExport("expenses", [
     [t("expenses.type"), t("expenses.amount")],
-    ...expenses.value.map((e) => [localized(e, "name"), e.amount]),
+    ...expenses.value.map((e) => [e.name, e.amount]),
     [t("expenses.total"), expenseTotal.value],
     [t("analytics.kpi.grossMargin"), grossMargin.value],
     [t("analytics.netProfit"), grossMargin.value - expenseTotal.value],
@@ -310,7 +309,7 @@ const exportExpenses = () =>
         <SelectContent>
           <SelectItem value="all">{{ $t("inventory.allCategories") }}</SelectItem>
           <SelectItem v-for="c in categories" :key="c.id" :value="String(c.id)">
-            {{ (c.parent_id ? "— " : "") + localized(c, "name") }}
+            {{ (c.parent_id ? "— " : "") + c.name }}
           </SelectItem>
         </SelectContent>
       </Select>
@@ -404,7 +403,7 @@ const exportExpenses = () =>
                 <li v-for="c in cats" :key="c.id ?? 0" class="space-y-1">
                   <div class="flex items-center gap-2 text-sm">
                     <AppIcon v-if="c.icon_key" :icon="c.icon_key" :size="16" :style="{ color: categoryInk(c.color) }" />
-                    <span class="flex-1">{{ c.name ? localized(c, "name") : $t("catalog.noCategory") }}</span>
+                    <span class="flex-1">{{ c.name ? c.name : $t("catalog.noCategory") }}</span>
                     <span class="num font-medium">{{ formatCurrency(c.revenue) }}</span>
                   </div>
                   <div class="h-1.5 overflow-hidden rounded-full bg-muted">
@@ -456,7 +455,7 @@ const exportExpenses = () =>
                 <TableCell colspan="4" class="py-10 text-center text-muted-foreground">{{ $t("analytics.noSales") }}</TableCell>
               </TableRow>
               <TableRow v-for="p in topProducts" :key="p.product_id">
-                <TableCell class="ps-5 font-medium"><bdi>{{ localized(p, "name") }}</bdi></TableCell>
+                <TableCell class="ps-5 font-medium"><bdi>{{ p.name }}</bdi></TableCell>
                 <TableCell class="num text-end">{{ p.quantity }}</TableCell>
                 <TableCell class="num text-end font-semibold">{{ formatCurrency(p.revenue) }}</TableCell>
                 <TableCell class="num pe-5 text-end">
@@ -473,7 +472,7 @@ const exportExpenses = () =>
             <h2 class="border-b px-5 py-4 font-semibold">{{ $t("analytics.leastSold") }}</h2>
             <ul class="divide-y text-sm">
               <li v-for="p in bottomProducts" :key="p.product_id" class="flex justify-between px-5 py-2.5">
-                <bdi>{{ localized(p, "name") }}</bdi>
+                <bdi>{{ p.name }}</bdi>
                 <span class="num text-muted-foreground">{{ p.quantity }} — {{ formatCurrency(p.revenue) }}</span>
               </li>
             </ul>
@@ -483,7 +482,7 @@ const exportExpenses = () =>
             <p v-if="!slow.length" class="px-5 py-6 text-sm text-muted-foreground">{{ $t("analytics.everythingSold") }}</p>
             <ul class="divide-y text-sm">
               <li v-for="p in slow" :key="p.id" class="flex justify-between px-5 py-2.5">
-                <bdi>{{ localized(p, "name") }}</bdi>
+                <bdi>{{ p.name }}</bdi>
                 <span class="num text-muted-foreground">{{ $t("pos.left", { n: p.stock }) }}</span>
               </li>
             </ul>
@@ -561,7 +560,7 @@ const exportExpenses = () =>
             <li v-for="e in expenses" :key="e.type_id" class="space-y-1">
               <div class="flex items-center gap-2 text-sm">
                 <AppIcon :icon="e.icon_key" :size="16" :style="{ color: categoryInk(e.color) }" />
-                <span class="flex-1">{{ localized(e, "name") }}</span>
+                <span class="flex-1">{{ e.name }}</span>
                 <span class="num font-medium">{{ formatCurrency(e.amount) }}</span>
               </div>
               <div class="h-1.5 overflow-hidden rounded-full bg-muted">

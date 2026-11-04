@@ -41,6 +41,18 @@ pub fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0005_money.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 6,
+            description: "single_language",
+            sql: include_str!("../migrations/0006_single_language.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 7,
+            description: "register",
+            sql: include_str!("../migrations/0007_register.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -87,9 +99,8 @@ pub async fn seed_demo_data(ctx: &crate::ctx::Ctx) -> Result<()> {
     if count > 0 {
         return Err(Error::Invalid("the catalog already has products".into()));
     }
-    sqlx::raw_sql(include_str!("../seeds/demo.sql"))
-        .execute(pool)
-        .await?;
+    let lang = crate::settings::get(ctx, "language", "ku").await?;
+    crate::seeds::insert_demo_catalog(pool, &lang).await?;
     seed_demo_history(ctx).await?;
     Ok(())
 }
@@ -248,10 +259,7 @@ mod tests {
             for m in migrations() {
                 sqlx::raw_sql(m.sql).execute(&pool).await.unwrap();
             }
-            sqlx::raw_sql(include_str!("../seeds/demo.sql"))
-                .execute(&pool)
-                .await
-                .unwrap();
+            crate::seeds::insert_demo_catalog(&pool, "ku").await.unwrap();
 
             let (language,): (String,) =
                 sqlx::query_as("SELECT value FROM settings WHERE key = 'language'")

@@ -133,6 +133,69 @@ pub async fn require(ctx: &Ctx, permission: &str) -> Result<Actor> {
     }
 }
 
+// ------------------------------------------------------ manager approval
+
+/// Actions a manager can approve at the till with their PIN.
+pub const OVERRIDABLE: &[&str] = &["sales.discount", "sales.void_line", "sales.refund"];
+const OVERRIDE_TTL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+#[derive(Debug, Deserialize)]
+pub struct OverrideArgs {
+    pub pin: String,
+    pub permission: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverrideGrant {
+    pub token: String,
+    pub approver_name: String,
+}
+
+/// Another active user who holds `permission` types their PIN; the till
+/// gets a single-use token to pass with the action. Audited either way.
+pub async fn authorize_override(ctx: &Ctx, args: OverrideArgs) -> Result<OverrideGrant> {
+    let actor = current(ctx).await?;
+    if !OVERRIDABLE.contains(&args.permission.as_str()) {
+        return Err(Error::Invalid(format!("{} can't be approved at the till", args.permission)));
+    }
+    validate_pin(&args.pin).map_err(|_| Error::BadCredentials)?;
+    let approver = find_by_pin(ctx, &args.pin, Some(actor.user_id)).await?;
+    let granted = match approver {
+        Some(id) => {
+            let (role_id,): (i64,) = sqlx::query_as("SELECT role_id FROM users WHERE id = $1").bind(id).fetch_one(&ctx.pool).await?;
+            let (is_owner, perms) = role_permissions(ctx, role_id).await?;
+            (is_owner || perms.contains(&args.permission)).then_some(id)
+        }
+        None => None,
+    };
+    audit::log(ctx, Some(actor.user_id), "override", "users", granted, &serde_json::json!({ "permission": args.permission, "granted": granted.is_some() })).await?;
+    let Some(approver_id) = granted else {
+        return Err(if approver.is_some() { Error::Rule("approver_lacks_permission") } else { Error::BadCredentials });
+    };
+    let token = uuid::Uuid::new_v4().to_string();
+    ctx.session.add_override(crate::ctx::Override {
+        token: token.clone(),
+        permission: args.permission,
+        approver_id,
+        expires: std::time::Instant::now() + OVERRIDE_TTL,
+    });
+    let (approver_name,): (String,) = sqlx::query_as("SELECT full_name FROM users WHERE id = $1").bind(approver_id).fetch_one(&ctx.pool).await?;
+    Ok(OverrideGrant { token, approver_name })
+}
+
+/// The actor may do `permission` themselves (Ok(None)) or with a valid
+/// override token (Ok(Some(approver))); otherwise Forbidden.
+pub async fn require_or_override(ctx: &Ctx, actor: &Actor, permission: &str, token: Option<&str>) -> Result<Option<i64>> {
+    if actor.can(permission) {
+        return Ok(None);
+    }
+    token
+        .and_then(|t| ctx.session.take_override(t, permission))
+        .map(Some)
+        .ok_or_else(|| Error::Forbidden(permission.to_owned()))
+}
+
 /// First run: nobody can sign in until an owner account exists.
 pub async fn needs_setup(ctx: &Ctx) -> Result<bool> {
     let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
@@ -150,12 +213,7 @@ pub struct SessionUser {
     pub full_name: String,
     pub username: String,
     pub role_id: i64,
-    #[serde(rename = "roleName")]
-    pub role_name_en: String,
-    #[serde(rename = "roleName_ku")]
-    pub role_name_ku: String,
-    #[serde(rename = "roleName_ar")]
-    pub role_name_ar: Option<String>,
+    pub role_name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -179,8 +237,7 @@ pub async fn status(ctx: &Ctx) -> Result<AuthStatus> {
     let session = match current(ctx).await {
         Ok(actor) => {
             let user: SessionUser = sqlx::query_as(
-                "SELECT u.id, u.full_name, u.username, u.role_id,
-                        r.name_en AS role_name_en, r.name_ku AS role_name_ku, r.name_ar AS role_name_ar
+                "SELECT u.id, u.full_name, u.username, u.role_id, r.name AS role_name
                  FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1",
             )
             .bind(actor.user_id)
@@ -274,9 +331,18 @@ pub async fn logout(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
-/// Clocks the signed-in user out and signs them out.
-pub async fn end_shift(ctx: &Ctx) -> Result<()> {
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndShiftArgs {
+    /// Cash counted in the drawer; None skips the count
+    pub counted_cash: Option<f64>,
+    pub note: Option<String>,
+}
+
+/// Counts the drawer, clocks the signed-in user out and signs them out.
+pub async fn end_shift(ctx: &Ctx, args: EndShiftArgs) -> Result<()> {
     let actor = current(ctx).await?;
+    shifts::close_drawer(ctx, actor.user_id, args.counted_cash, args.note.as_deref()).await?;
     shifts::clock_out(ctx, actor.user_id).await?;
     logout(ctx).await
 }
@@ -290,17 +356,37 @@ pub struct OwnerInput {
     pub pin: Option<String>,
 }
 
+/// A category picked from the setup checklist (names already in the
+/// chosen language), with its subcategories.
 #[derive(Debug, Deserialize)]
-pub struct SetupArgs {
-    pub shop: settings::ShopProfileInput,
-    pub owner: OwnerInput,
+#[serde(rename_all = "camelCase")]
+pub struct StarterCategory {
+    pub name: String,
+    pub icon_key: String,
+    pub color: Option<String>,
+    #[serde(default)]
+    pub children: Vec<StarterCategory>,
 }
 
-/// First run: saves the shop profile, creates the owner and signs them in.
-/// Refused once any user exists.
+#[derive(Debug, Deserialize)]
+pub struct SetupArgs {
+    /// ku | ar | en; fixed after setup
+    pub language: String,
+    pub shop: settings::ShopProfileInput,
+    pub owner: OwnerInput,
+    #[serde(default)]
+    pub categories: Vec<StarterCategory>,
+}
+
+/// First run: fixes the shop's language, saves the shop profile, creates the
+/// starter categories and the owner, and signs them in. Refused once any
+/// user exists.
 pub async fn complete_setup(ctx: &Ctx, args: SetupArgs) -> Result<AuthStatus> {
     if !needs_setup(ctx).await? {
         return Err(Error::Rule("setup_done"));
+    }
+    if !matches!(args.language.as_str(), "ku" | "ar" | "en") {
+        return Err(Error::Invalid(format!("unknown language {}", args.language)));
     }
     let owner = args.owner;
     let full_name = owner.full_name.trim();
@@ -318,6 +404,12 @@ pub async fn complete_setup(ctx: &Ctx, args: SetupArgs) -> Result<AuthStatus> {
     };
 
     settings::upsert_shop_profile(ctx, &args.shop).await?;
+    sqlx::query("UPDATE settings SET value = $1 WHERE key = 'language'")
+        .bind(&args.language)
+        .execute(&ctx.pool)
+        .await?;
+    crate::seeds::localize_defaults(&ctx.pool, &args.language).await?;
+    insert_starter_categories(ctx, &args.categories).await?;
     let id = sqlx::query(
         "INSERT INTO users (username, password_hash, pin_hash, full_name, role_id)
          VALUES ($1, $2, $3, $4, $5)",
@@ -334,6 +426,41 @@ pub async fn complete_setup(ctx: &Ctx, args: SetupArgs) -> Result<AuthStatus> {
     sign_in(ctx, id, "setup").await
 }
 
+/// Categories picked at setup. Skips ones that already exist (an older
+/// install may have some) rather than failing setup.
+async fn insert_starter_categories(ctx: &Ctx, cats: &[StarterCategory]) -> Result<()> {
+    for (i, c) in cats.iter().enumerate() {
+        if c.name.trim().is_empty() || !c.icon_key.contains(':') {
+            continue;
+        }
+        let parent = sqlx::query(
+            "INSERT OR IGNORE INTO categories (name, icon_key, color, display_order) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(c.name.trim())
+        .bind(&c.icon_key)
+        .bind(&c.color)
+        .bind(i as i64 + 1)
+        .execute(&ctx.pool)
+        .await?
+        .last_insert_rowid();
+        for (j, child) in c.children.iter().enumerate() {
+            if child.name.trim().is_empty() || !child.icon_key.contains(':') {
+                continue;
+            }
+            sqlx::query(
+                "INSERT OR IGNORE INTO categories (name, icon_key, parent_id, display_order) VALUES ($1, $2, $3, $4)",
+            )
+            .bind(child.name.trim())
+            .bind(&child.icon_key)
+            .bind(parent)
+            .bind(j as i64 + 1)
+            .execute(&ctx.pool)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub mod test_helpers {
     use super::*;
@@ -343,13 +470,25 @@ pub mod test_helpers {
         complete_setup(
             ctx,
             SetupArgs {
-                shop: settings::ShopProfileInput::named("Shop", "دووکان"),
+                language: "ku".into(),
+                shop: settings::ShopProfileInput::named("دووکان"),
                 owner: OwnerInput {
                     full_name: "Owner".into(),
                     username: "owner".into(),
                     password: "secret1".into(),
                     pin: Some("1234".into()),
                 },
+                categories: vec![StarterCategory {
+                    name: "خواردنەوە".into(),
+                    icon_key: "tabler:bottle".into(),
+                    color: Some("#2d5a8f".into()),
+                    children: vec![StarterCategory {
+                        name: "ئاو".into(),
+                        icon_key: "tabler:droplet".into(),
+                        color: None,
+                        children: vec![],
+                    }],
+                }],
             },
         )
         .await
@@ -375,11 +514,16 @@ mod tests {
             assert!(session.is_owner);
             assert!(session.permissions.contains(&"roles.manage".to_string()));
             assert!(session.shift.is_some(), "signing in starts a shift");
+            assert_eq!(session.user.role_name, "خاوەن", "default roles are renamed into the shop's language");
+            let (cats,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM categories").fetch_one(&ctx.pool).await.unwrap();
+            assert_eq!(cats, 2, "starter category and its subcategory");
 
             let again = complete_setup(
                 &ctx,
                 SetupArgs {
-                    shop: settings::ShopProfileInput::named("x", "x"),
+                    language: "en".into(),
+                    categories: vec![],
+                    shop: settings::ShopProfileInput::named("x"),
                     owner: OwnerInput {
                         full_name: "x".into(),
                         username: "x2".into(),
@@ -434,7 +578,7 @@ mod tests {
                 .id;
             assert_eq!(first, resumed);
 
-            end_shift(&ctx).await.unwrap();
+            end_shift(&ctx, EndShiftArgs::default()).await.unwrap();
             assert!(ctx.session.get().is_none());
             let next = login_pin(&ctx, PinArgs { pin: "1234".into() })
                 .await

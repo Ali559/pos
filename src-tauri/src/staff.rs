@@ -40,15 +40,14 @@ async fn ensure_role_within(ctx: &Ctx, actor: &Actor, role_id: i64) -> Result<()
 
 #[derive(Debug, Deserialize)]
 pub struct RoleInput {
-    pub name_en: String,
-    pub name_ku: String,
-    pub name_ar: Option<String>,
+    /// In the shop's language
+    pub name: String,
     pub description: Option<String>,
     pub permissions: Vec<String>,
 }
 
 async fn validate_role(ctx: &Ctx, actor: &Actor, role: &RoleInput) -> Result<HashSet<String>> {
-    if role.name_en.trim().is_empty() || role.name_ku.trim().is_empty() {
+    if role.name.trim().is_empty() {
         return Err(Error::Rule("role_names_required"));
     }
     let wanted: HashSet<String> = role.permissions.iter().cloned().collect();
@@ -82,16 +81,14 @@ async fn write_role_permissions(ctx: &Ctx, role_id: i64, perms: &HashSet<String>
 pub async fn create_role(ctx: &Ctx, role: RoleInput) -> Result<i64> {
     let actor = auth::require(ctx, "roles.manage").await?;
     let perms = validate_role(ctx, &actor, &role).await?;
-    let id = sqlx::query("INSERT INTO roles (name_en, name_ku, name_ar, description) VALUES ($1, $2, $3, $4)")
-        .bind(role.name_en.trim())
-        .bind(role.name_ku.trim())
-        .bind(blank_to_none(&role.name_ar))
+    let id = sqlx::query("INSERT INTO roles (name, description) VALUES ($1, $2)")
+        .bind(role.name.trim())
         .bind(blank_to_none(&role.description))
         .execute(&ctx.pool)
         .await?
         .last_insert_rowid();
     write_role_permissions(ctx, id, &perms).await?;
-    audit::log(ctx, Some(actor.user_id), "role.create", "roles", Some(id), &serde_json::json!({ "name": role.name_en, "permissions": role.permissions })).await?;
+    audit::log(ctx, Some(actor.user_id), "role.create", "roles", Some(id), &serde_json::json!({ "name": role.name, "permissions": role.permissions })).await?;
     Ok(id)
 }
 
@@ -110,16 +107,14 @@ pub async fn update_role(ctx: &Ctx, args: UpdateRoleArgs) -> Result<()> {
     // Can't edit a role that already holds more than you do, either
     ensure_within(&actor, &current)?;
     let perms = validate_role(ctx, &actor, &args.role).await?;
-    sqlx::query("UPDATE roles SET name_en = $1, name_ku = $2, name_ar = $3, description = $4 WHERE id = $5")
-        .bind(args.role.name_en.trim())
-        .bind(args.role.name_ku.trim())
-        .bind(blank_to_none(&args.role.name_ar))
+    sqlx::query("UPDATE roles SET name = $1, description = $2 WHERE id = $3")
+        .bind(args.role.name.trim())
         .bind(blank_to_none(&args.role.description))
         .bind(args.id)
         .execute(&ctx.pool)
         .await?;
     write_role_permissions(ctx, args.id, &perms).await?;
-    audit::log(ctx, Some(actor.user_id), "role.update", "roles", Some(args.id), &serde_json::json!({ "name": args.role.name_en, "permissions": args.role.permissions })).await
+    audit::log(ctx, Some(actor.user_id), "role.update", "roles", Some(args.id), &serde_json::json!({ "name": args.role.name, "permissions": args.role.permissions })).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -380,9 +375,7 @@ mod tests {
             update_role(&ctx, UpdateRoleArgs {
                 id: MANAGER,
                 role: RoleInput {
-                    name_en: "Manager".into(),
-                    name_ku: "بەڕێوەبەر".into(),
-                    name_ar: None,
+                    name: "Manager".into(),
                     description: None,
                     permissions: ["staff.edit", "staff.view", "roles.manage", "sales.sell", "sales.reprint", "inventory.view"]
                         .map(String::from)
@@ -400,9 +393,7 @@ mod tests {
             assert!(matches!(create_user(&ctx, user("o2", OWNER_ROLE_ID)).await, Err(Error::Rule("above_your_permissions"))));
             // …nor a role with permissions they lack
             let r = create_role(&ctx, RoleInput {
-                name_en: "Admin".into(),
-                name_ku: "ئەدمین".into(),
-                name_ar: None,
+                name: "Admin".into(),
                 description: None,
                 permissions: vec!["settings.system".into()],
             })

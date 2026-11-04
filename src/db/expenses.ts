@@ -3,9 +3,7 @@ import type { MediaFile } from "@/lib/media";
 
 export interface ExpenseType {
   id: number;
-  name_en: string;
-  name_ku: string;
-  name_ar: string | null;
+  name: string;
   icon_key: string;
   color: string | null;
   is_active: number;
@@ -20,9 +18,7 @@ export interface Expense {
   recurring: "weekly" | "monthly" | null;
   recurring_parent_id: number | null;
   status: "confirmed" | "draft";
-  type_name_en: string;
-  type_name_ku: string;
-  type_name_ar: string | null;
+  type_name: string;
   type_icon: string;
   type_color: string | null;
   receipt: MediaFile | null;
@@ -30,7 +26,7 @@ export interface Expense {
 
 export const listExpenseTypes = (includeArchived = false) =>
   select<ExpenseType>(
-    `SELECT id, name_en, name_ku, name_ar, icon_key, color, is_active FROM expense_types
+    `SELECT id, name, icon_key, color, is_active FROM expense_types
      ${includeArchived ? "" : "WHERE is_active = 1"} ORDER BY display_order, id`,
   );
 
@@ -49,7 +45,7 @@ export const listExpenses = async (q: { from: string; to: string; typeId?: numbe
   }
   const rows = await select<Row>(
     `SELECT e.id, e.type_id, e.amount, e.spent_on, e.note, e.recurring, e.recurring_parent_id, e.status,
-            t.name_en AS type_name_en, t.name_ku AS type_name_ku, t.name_ar AS type_name_ar,
+            t.name AS type_name,
             t.icon_key AS type_icon, t.color AS type_color,
             m.id AS m_id, m.uuid AS m_uuid, m.path AS m_path, m.mime AS m_mime, m.width AS m_width,
             m.height AS m_height, m.bytes AS m_bytes, m.blurhash AS m_blurhash

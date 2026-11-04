@@ -10,10 +10,13 @@ mod db;
 mod error;
 mod expenses;
 mod export;
+mod lookup;
 mod media;
 mod notifications;
 mod query;
+mod returns;
 mod sales;
+mod seeds;
 mod settings;
 mod shifts;
 mod staff;
@@ -22,6 +25,13 @@ mod stock;
 use std::sync::Arc;
 
 use tauri::Manager;
+
+/// Opens the system print dialog for the page; the receipt is laid out by
+/// print CSS. (`window.print()` does nothing in some webviews.)
+#[tauri::command]
+fn print_receipt(webview: tauri::Webview) -> error::Result<()> {
+    Ok(webview.print()?)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -53,6 +63,8 @@ pub fn run() {
             commands::login_pin,
             commands::logout,
             commands::end_shift,
+            commands::shift_summary,
+            commands::authorize_override,
             commands::set_setting,
             commands::save_shop_profile,
             commands::create_role,
@@ -71,6 +83,9 @@ pub fn run() {
             commands::create_product,
             commands::update_product,
             commands::checkout,
+            commands::void_line,
+            commands::create_return,
+            print_receipt,
             commands::receive_stock,
             commands::remove_stock,
             commands::refresh_notifications,
@@ -84,6 +99,7 @@ pub fn run() {
             commands::confirm_expense,
             commands::delete_expense,
             commands::authorize_export,
+            commands::lookup_barcode,
             commands::seed_demo_data,
         ])
         .run(tauri::generate_context!())

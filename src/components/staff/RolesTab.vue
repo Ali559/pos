@@ -23,7 +23,6 @@ import {
 import { call } from "@/lib/ipc";
 import { errorMessage, isAppError } from "@/lib/errors";
 import { useAuth } from "@/stores/auth";
-import { localized } from "@/utils/i18n";
 
 const { t } = useI18n();
 const auth = useAuth();
@@ -56,7 +55,7 @@ const mayGrant = (key: string) => auth.can(key);
 
 const open = ref(false);
 const editing = ref<Role | null>(null);
-const form = ref({ name_en: "", name_ku: "", name_ar: "", description: "" });
+const form = ref({ name: "", description: "" });
 const selected = ref(new Set<string>());
 const saving = ref(false);
 const error = ref("");
@@ -71,7 +70,7 @@ const reset = () => {
 
 const startCreate = () => {
   editing.value = null;
-  form.value = { name_en: "", name_ku: "", name_ar: "", description: "" };
+  form.value = { name: "", description: "" };
   selected.value = new Set();
   reset();
   open.value = true;
@@ -81,9 +80,7 @@ const startEdit = async (r: Role, duplicate = false) => {
   editing.value = duplicate ? null : r;
   const copy = (s: string | null) => (duplicate && s ? t("staff.roles.copyOf", { name: s }) : s ?? "");
   form.value = {
-    name_en: copy(r.name_en),
-    name_ku: copy(r.name_ku),
-    name_ar: copy(r.name_ar),
+    name: copy(r.name),
     description: r.description ?? "",
   };
   selected.value = new Set(
@@ -167,7 +164,7 @@ const isSystem = computed(() => !!editing.value?.is_system);
     <ul class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       <li v-for="r in roles" :key="r.id" class="flex flex-col rounded-xl border bg-card p-5">
         <div class="flex items-start gap-2">
-          <h3 class="flex-1 font-semibold">{{ localized(r, "name") }}</h3>
+          <h3 class="flex-1 font-semibold">{{ r.name }}</h3>
           <span
             v-if="r.is_system"
             class="inline-flex items-center gap-1 rounded-md bg-sun/20 px-2 py-0.5 text-xs font-medium"
@@ -206,19 +203,9 @@ const isSystem = computed(() => !!editing.value?.is_system);
       :title="editing ? $t('staff.roles.edit') : $t('settings.roles.addRole')"
       @submit="save"
     >
-      <div class="grid gap-4 sm:grid-cols-3">
-        <div class="space-y-2">
-          <Label for="r-en">{{ $t("staff.roles.nameEn") }}</Label>
-          <Input id="r-en" v-model="form.name_en" required lang="en" dir="ltr" :disabled="isSystem" />
-        </div>
-        <div class="space-y-2">
-          <Label for="r-ku">{{ $t("staff.roles.nameKu") }}</Label>
-          <Input id="r-ku" v-model="form.name_ku" required lang="ku" dir="rtl" :disabled="isSystem" />
-        </div>
-        <div class="space-y-2">
-          <Label for="r-ar">{{ $t("staff.roles.nameAr") }}</Label>
-          <Input id="r-ar" v-model="form.name_ar" lang="ar" dir="rtl" :disabled="isSystem" />
-        </div>
+      <div class="space-y-2">
+        <Label for="r-name">{{ $t("catalog.name") }}</Label>
+        <Input id="r-name" v-model="form.name" required dir="auto" :disabled="isSystem" />
       </div>
       <div class="space-y-2">
         <Label for="r-desc">{{ $t("settings.roles.description") }}</Label>
@@ -282,7 +269,7 @@ const isSystem = computed(() => !!editing.value?.is_system);
           <SelectTrigger class="w-full"><SelectValue :placeholder="$t('staff.roles.pickRole')" /></SelectTrigger>
           <SelectContent>
             <SelectItem v-for="r in otherRoles" :key="r.id" :value="String(r.id)">
-              {{ localized(r, "name") }}
+              {{ r.name }}
             </SelectItem>
           </SelectContent>
         </Select>

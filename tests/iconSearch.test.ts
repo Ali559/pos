@@ -54,3 +54,36 @@ describe("search", () => {
     expect(search(index, "نان").map((i) => i.name)).toContain("bread");
   });
 });
+
+import { guessCategory } from "../src/lib/barcodeLookup";
+
+describe("guessCategory", () => {
+  const cat = (id: number, name: string, parent_id: number | null = null) =>
+    ({ id, name, parent_id, is_active: 1 }) as never;
+  const cats = [cat(1, "خواردنەوە"), cat(2, "خواردنەوەی گازی", 1), cat(3, "شیرەمەنی"), cat(4, "Snacks")];
+
+  test("Open Food Facts tags find Kurdish categories, most specific first", () => {
+    expect(guessCategory(["en:beverages", "en:carbonated-drinks", "en:sodas"], cats)?.id).toBe(2);
+    expect(guessCategory(["en:dairies", "en:milks"], cats)?.id).toBe(3);
+  });
+  test("no match, no guess", () => {
+    expect(guessCategory(["en:pet-food"], cats)).toBeNull();
+  });
+});
+
+import { code128Bars, code128Values } from "../src/lib/code128";
+
+describe("code128", () => {
+  test("adds start, checksum and stop", () => {
+    // "R-000042": checksum worked by hand
+    const v = code128Values("R-000042");
+    expect(v[0]).toBe(104);
+    expect(v.at(-1)).toBe(106);
+    const data = v.slice(1, -2);
+    expect(v.at(-2)).toBe(data.reduce((s, x, i) => s + x * (i + 1), 104) % 103);
+  });
+  test("each symbol is 11 modules, the stop 13", () => {
+    const { width } = code128Bars("R-000042");
+    expect(width).toBe(11 * (8 + 2) + 13);
+  });
+});

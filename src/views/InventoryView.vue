@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import CategoriesTab from "@/components/catalog/CategoriesTab.vue";
+import QuickAddTab from "@/components/catalog/QuickAddTab.vue";
 import ProductSheet from "@/components/catalog/ProductSheet.vue";
 import ProductThumb from "@/components/catalog/ProductThumb.vue";
 import StockSheet from "@/components/catalog/StockSheet.vue";
@@ -34,7 +35,6 @@ import {
 } from "@/db/catalog";
 import { formatCurrency } from "@/lib/format";
 import { useAuth } from "@/stores/auth";
-import { localized } from "@/utils/i18n";
 
 const PAGE_SIZE = 10;
 const auth = useAuth();
@@ -130,6 +130,7 @@ const onCategoriesChanged = () => {
       <TabsList class="mb-6">
         <TabsTrigger value="products">{{ $t("catalog.tabs.products") }}</TabsTrigger>
         <TabsTrigger value="categories">{{ $t("catalog.tabs.categories") }}</TabsTrigger>
+        <TabsTrigger v-if="canEdit" value="quick">{{ $t("catalog.tabs.quickAdd") }}</TabsTrigger>
       </TabsList>
 
       <TabsContent value="products">
@@ -152,7 +153,7 @@ const onCategoriesChanged = () => {
             <SelectContent>
               <SelectItem value="all">{{ $t("inventory.allCategories") }}</SelectItem>
               <SelectItem v-for="c in categories" :key="c.id" :value="String(c.id)">
-                {{ (c.parent_id ? "— " : "") + localized(c, "name") }}
+                {{ (c.parent_id ? "— " : "") + c.name }}
               </SelectItem>
             </SelectContent>
           </Select>
@@ -192,9 +193,9 @@ const onCategoriesChanged = () => {
                   <div class="flex items-center gap-3">
                     <ProductThumb :product="p" :size="40" />
                     <div class="min-w-0">
-                      <div class="truncate font-medium"><bdi>{{ localized(p, "name") }}</bdi></div>
+                      <div class="truncate font-medium"><bdi>{{ p.name }}</bdi></div>
                       <div class="text-xs text-muted-foreground">
-                        {{ p.categoryName ? localized(p, "categoryName") : $t("catalog.noCategory") }}
+                        {{ p.categoryName ? p.categoryName : $t("catalog.noCategory") }}
                         <template v-if="!p.isActive"> — {{ $t("catalog.notForSale") }}</template>
                       </div>
                     </div>
@@ -275,6 +276,10 @@ const onCategoriesChanged = () => {
       <TabsContent value="categories">
         <CategoriesTab @changed="onCategoriesChanged" />
       </TabsContent>
+
+      <TabsContent v-if="canEdit" value="quick">
+        <QuickAddTab :categories="categories" @changed="onSaved" />
+      </TabsContent>
     </Tabs>
 
     <StockSheet v-model:open="stockOpen" :product="stockProduct" @saved="load" />
@@ -283,6 +288,7 @@ const onCategoriesChanged = () => {
       :product-id="editingId"
       :categories="categories"
       @saved="onSaved"
+      @switch="editingId = $event"
     />
   </div>
 </template>

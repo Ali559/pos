@@ -5,7 +5,6 @@ import { Delete, Loader2, ReceiptText } from "lucide-vue-next";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import LanguageSwitcher from "@/components/LanguageSwitcher.vue";
 import MediaImage from "@/components/media/MediaImage.vue";
 import { useTimeManager } from "@/hooks/useTimeManager";
 import { formatCurrency } from "@/lib/format";
@@ -119,9 +118,6 @@ const switchMode = (m: "password" | "pin") => {
 
     <!-- Form side -->
     <main class="flex flex-col p-6 sm:p-10">
-      <div class="flex justify-end">
-        <LanguageSwitcher />
-      </div>
       <div class="m-auto w-full max-w-sm">
         <h1 class="text-3xl font-semibold tracking-tight">
           {{ $t("login.subtitle") }}

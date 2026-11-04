@@ -4,8 +4,6 @@ import type { MediaFile } from "@/lib/media";
 export interface Category {
   id: number;
   name: string;
-  name_ku: string | null;
-  name_ar: string | null;
   description: string | null;
   parent_id: number | null;
   icon_key: string;
@@ -21,8 +19,6 @@ export interface Product {
   id: number;
   sku: string;
   name: string;
-  name_ku: string | null;
-  name_ar: string | null;
   barcode: string | null;
   price: number;
   stock: number;
@@ -34,8 +30,6 @@ export interface Product {
   /** Top-level category: the category itself, or its parent for a subcategory */
   rootCategoryId: number | null;
   categoryName: string | null;
-  categoryName_ku: string | null;
-  categoryName_ar: string | null;
   categoryColor: string | null;
   categoryIcon: string | null;
   cover: MediaFile | null;
@@ -48,7 +42,7 @@ export const stockState = (p: Pick<Product, "stock" | "minStock">): StockState =
 
 export const listCategories = (includeArchived = false) =>
   select<Category>(
-    `SELECT c.id, c.name, c.name_ku, c.name_ar, c.description, c.parent_id, c.icon_key,
+    `SELECT c.id, c.name, c.description, c.parent_id, c.icon_key,
             COALESCE(c.color, p.color) AS color, c.color AS own_color, c.is_active, c.display_order,
             (SELECT COUNT(*) FROM products pr WHERE pr.category_id = c.id) AS product_count
      FROM categories c LEFT JOIN categories p ON p.id = c.parent_id
@@ -58,14 +52,14 @@ export const listCategories = (includeArchived = false) =>
   );
 
 const PRODUCT_COLUMNS = `
-  p.id, p.sku, p.name, p.name_ku, p.name_ar, p.barcode,
+  p.id, p.sku, p.name, p.barcode,
   p.selling_price AS price,
   p.stock_quantity AS stock,
   p.min_stock_level AS minStock,
   p.unit, p.icon_key AS iconKey, p.is_active AS isActive,
   p.category_id AS categoryId,
   COALESCE(c.parent_id, c.id) AS rootCategoryId,
-  c.name AS categoryName, c.name_ku AS categoryName_ku, c.name_ar AS categoryName_ar,
+  c.name AS categoryName,
   COALESCE(c.color, pc.color) AS categoryColor,
   c.icon_key AS categoryIcon,
   m.id AS m_id, m.uuid AS m_uuid, m.path AS m_path, m.mime AS m_mime,
@@ -111,7 +105,7 @@ const productFilter = ({ search, categoryId, includeInactive }: ProductQuery) =>
     params.push(`%${q}%`);
     const n = params.length;
     where.push(
-      `(p.name LIKE $${n} OR p.name_ku LIKE $${n} OR p.name_ar LIKE $${n} OR p.sku LIKE $${n} OR p.barcode LIKE $${n})`,
+      `(p.name LIKE $${n} OR p.sku LIKE $${n} OR p.barcode LIKE $${n})`,
     );
   }
   return { sql: where.length ? ` WHERE ${where.join(" AND ")}` : "", params };
@@ -159,8 +153,6 @@ export interface ProductDetail {
   id: number;
   sku: string;
   name: string;
-  name_ku: string | null;
-  name_ar: string | null;
   category_id: number | null;
   barcode: string | null;
   cost_price: number;
@@ -176,7 +168,7 @@ export interface ProductDetail {
 
 export const getProduct = async (id: number): Promise<ProductDetail | null> => {
   const p = await selectOne<Omit<ProductDetail, "extraBarcodes" | "media">>(
-    `SELECT id, sku, name, name_ku, name_ar, category_id, barcode, cost_price, selling_price,
+    `SELECT id, sku, name, category_id, barcode, cost_price, selling_price,
             min_stock_level, unit, icon_key, is_active, stock_quantity
      FROM products WHERE id = $1`,
     [id],

@@ -70,16 +70,16 @@ async fn conditions(ctx: &Ctx) -> Result<Vec<Condition>> {
         });
     }
 
-    let drafts: Vec<(i64, String, String, Option<String>, f64, String)> = sqlx::query_as(
-        "SELECT e.id, t.name_en, t.name_ku, t.name_ar, e.amount, e.spent_on
+    let drafts: Vec<(i64, String, f64, String)> = sqlx::query_as(
+        "SELECT e.id, t.name, e.amount, e.spent_on
          FROM expenses e JOIN expense_types t ON t.id = e.type_id WHERE e.status = 'draft'",
     )
     .fetch_all(&ctx.pool)
     .await?;
-    for (id, en, ku, ar, amount, on) in drafts {
+    for (id, name, amount, on) in drafts {
         out.push(Condition {
             key: ("expense_due".into(), None, None, Some(id)),
-            payload: json!({ "name": en, "name_ku": ku, "name_ar": ar, "amount": amount, "date": on }),
+            payload: json!({ "name": name, "amount": amount, "date": on }),
         });
     }
     Ok(out)
@@ -236,7 +236,7 @@ mod tests {
     use crate::auth::test_helpers::setup_owner;
     use crate::catalog::create_product;
     use crate::ctx::test_support;
-    use crate::sales::{checkout, CheckoutArgs, CheckoutLine};
+    use crate::sales::{checkout, tests::sell as sale_of};
     use crate::stock::{receive_stock, ReceiveArgs};
 
     async fn open(ctx: &Ctx) -> Vec<(String, Option<i64>)> {
@@ -257,7 +257,7 @@ mod tests {
             refresh(&ctx).await.unwrap();
             assert!(open(&ctx).await.is_empty());
 
-            let sell = |q: f64| checkout(&ctx, CheckoutArgs { lines: vec![CheckoutLine { product_id: id, quantity: q }], payment_method: "cash".into() });
+            let sell = |q: f64| checkout(&ctx, sale_of(id, q, "cash"));
             sell(1.0).await.unwrap();
             assert_eq!(open(&ctx).await, vec![("stock_low".into(), Some(id))]);
             sell(2.0).await.unwrap();
@@ -293,7 +293,7 @@ mod tests {
             assert_eq!(kinds, vec!["expired", "expiring"], "the 30-day batch is outside the 7-day window");
 
             // Selling 2 uses up the expired batch first, so its alert clears
-            checkout(&ctx, CheckoutArgs { lines: vec![CheckoutLine { product_id: id, quantity: 2.0 }], payment_method: "cash".into() })
+            checkout(&ctx, sale_of(id, 2.0, "cash"))
                 .await
                 .unwrap();
             let kinds: Vec<String> = open(&ctx).await.into_iter().map(|(k, _)| k).collect();

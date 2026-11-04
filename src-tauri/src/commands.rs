@@ -7,7 +7,7 @@ use tauri::AppHandle;
 
 use crate::ctx::Ctx;
 use crate::error::{Error, Result};
-use crate::{auth, catalog, expenses, export, notifications, query, sales, settings, shifts, staff, stock};
+use crate::{auth, catalog, expenses, export, lookup, notifications, query, returns, sales, settings, shifts, staff, stock};
 
 macro_rules! commands {
     ($( $name:ident $( ($args:ty) )? -> $out:ty => $f:path; )*) => {
@@ -47,7 +47,9 @@ commands! {
     login (auth::LoginArgs) -> auth::AuthStatus => auth::login;
     login_pin (auth::PinArgs) -> auth::AuthStatus => auth::login_pin;
     logout -> () => auth::logout;
-    end_shift -> () => auth::end_shift;
+    end_shift (auth::EndShiftArgs) -> () => auth::end_shift;
+    shift_summary -> Option<shifts::ShiftSummary> => shifts::shift_summary;
+    authorize_override (auth::OverrideArgs) -> auth::OverrideGrant => auth::authorize_override;
 
     set_setting (settings::SetSettingArgs) -> () => settings::set_setting;
     save_shop_profile (settings::SaveShopArgs) -> () => settings::save_shop_profile;
@@ -71,6 +73,8 @@ commands! {
     update_product (catalog::UpdateProductArgs) -> () => catalog::update_product;
 
     checkout (sales::CheckoutArgs) -> sales::SaleResult => sales::checkout;
+    void_line (sales::VoidLineArgs) -> () => sales::void_line;
+    create_return (returns::ReturnArgs) -> returns::ReturnResult => returns::create_return;
     receive_stock (stock::ReceiveArgs) -> () => stock::receive_stock;
     remove_stock (stock::RemoveArgs) -> () => stock::remove_stock;
 
@@ -87,6 +91,7 @@ commands! {
     delete_expense (expenses::IdArgs) -> () => expenses::delete_expense;
 
     authorize_export -> () => export::authorize_export;
+    lookup_barcode (lookup::LookupArgs) -> lookup::Lookup => lookup::lookup_barcode;
 
     seed_demo_data -> () => crate::db::seed_demo_data;
 }

@@ -6,14 +6,24 @@ import {
   Banknote,
   Check,
   CreditCard,
+  History,
   Loader2,
   Minus,
   PauseCircle,
+  Percent,
   Plus,
+  Printer,
   ScanBarcode,
   Trash2,
   X,
 } from "lucide-vue-next";
+import { RouterLink } from "vue-router";
+import CashDialog from "@/components/sales/CashDialog.vue";
+import DiscountDialog from "@/components/sales/DiscountDialog.vue";
+import ManagerPinDialog from "@/components/sales/ManagerPinDialog.vue";
+import { getSetting } from "@/db/settings";
+import { printReceipt } from "@/lib/print";
+import { useAuth } from "@/stores/auth";
 import {
   findProductByCode,
   listCategories,
@@ -27,7 +37,6 @@ import { categoryInk, categoryTint } from "@/lib/categoryColor";
 import AppIcon from "@/components/icons/AppIcon.vue";
 import ProductThumb from "@/components/catalog/ProductThumb.vue";
 import { useShop } from "@/stores/shop";
-import { localized } from "@/utils/i18n";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
 
@@ -36,10 +45,24 @@ interface CartItem {
   name: string;
   price: number;
   quantity: number;
+  /** Off this line, as an amount */
+  discount: number;
+}
+
+interface SaleResult {
+  id: number;
+  receiptNumber: string;
+  total: number;
+  change: number | null;
 }
 
 const { t } = useI18n();
-const { taxRate, load: loadShop } = useShop();
+const { taxRate, currency, load: loadShop } = useShop();
+const auth = useAuth();
+const pinDialog = ref<InstanceType<typeof ManagerPinDialog> | null>(null);
+const discountDialog = ref<InstanceType<typeof DiscountDialog> | null>(null);
+const cashDialog = ref<InstanceType<typeof CashDialog> | null>(null);
+const autoPrint = ref(false);
 
 // State
 const barcode = ref("");
@@ -57,10 +80,11 @@ const activeSub = ref<number | null>(null);
 const payment = ref<"cash" | "card">("cash");
 const lastAdded = ref<number | null>(null);
 // The last completed sale, shown on the empty receipt until the next scan
-const lastSale = ref<{ receiptNumber: string; total: number } | null>(null);
+const lastSale = ref<SaleResult | null>(null);
 const charging = ref(false);
 const chargeError = ref("");
 const cartItems = ref<CartItem[]>([]);
+const cartDiscount = ref(0);
 
 // Computed
 const roots = computed(() => categories.value.filter((c) => c.parent_id === null));
@@ -88,11 +112,15 @@ const qtyInCart = (id: number) =>
 const itemCount = computed(() =>
   cartItems.value.reduce((n, i) => n + i.quantity, 0),
 );
+// Mirrors the Rust totals (sales::checkout), which are what gets charged
+const roundMoney = (n: number) => (currency.value === "IQD" ? Math.round(n) : Math.round(n * 100) / 100);
 const subtotal = computed(() =>
   cartItems.value.reduce((sum, i) => sum + i.price * i.quantity, 0),
 );
-const tax = computed(() => (subtotal.value * taxRate.value) / 100);
-const total = computed(() => subtotal.value + tax.value);
+const lineDiscounts = computed(() => cartItems.value.reduce((sum, i) => sum + i.discount, 0));
+const discount = computed(() => lineDiscounts.value + cartDiscount.value);
+const tax = computed(() => roundMoney(((subtotal.value - discount.value) * taxRate.value) / 100));
+const total = computed(() => roundMoney(subtotal.value - discount.value) + tax.value);
 
 // Methods
 const focusScan = () => nextTick(() => scanInput.value?.focus());
@@ -107,7 +135,7 @@ const addProduct = (p: Product) => {
     existing.quantity++;
   }
   else
-    cartItems.value.push({ id: p.id, name: localized(p, "name"), price: p.price, quantity: 1 });
+    cartItems.value.push({ id: p.id, name: p.name, price: p.price, quantity: 1, discount: 0 });
   lastAdded.value = p.id;
   setTimeout(() => {
     if (lastAdded.value === p.id) lastAdded.value = null;
@@ -134,18 +162,69 @@ const incrementQuantity = (id: number) => {
   if (item && item.quantity + 1 <= stockOf(id)) item.quantity++;
 };
 
+// Taking something back off the cart is a void: it needs sales.void_line
+// or a manager's PIN, and Rust logs it
+const approveVoid = async (lines: { id: number; quantity: number }[]) => {
+  let overrideToken: string | null = null;
+  if (!auth.can("sales.void_line")) {
+    const grant = await pinDialog.value?.ask("sales.void_line");
+    if (!grant) return false;
+    overrideToken = grant.token;
+  }
+  await call("void_line", { lines: lines.map((l) => ({ productId: l.id, quantity: l.quantity })), overrideToken });
+  return true;
+};
+
+const runVoid = async (items: { id: number; quantity: number }[], apply: () => void) => {
+  chargeError.value = "";
+  try {
+    if (await approveVoid(items)) apply();
+  } catch (e) {
+    chargeError.value = errorMessage(e);
+  }
+  focusScan();
+};
+
 const decrementQuantity = (id: number) => {
   const item = cartItems.value.find((i) => i.id === id);
-  if (item && item.quantity > 1) item.quantity--;
-  else removeFromCart(id);
+  if (!item) return;
+  if (item.quantity <= 1) return removeFromCart(id);
+  runVoid([{ id, quantity: 1 }], () => {
+    item.quantity--;
+    item.discount = Math.min(item.discount, item.price * item.quantity);
+  });
 };
 
 const removeFromCart = (id: number) => {
-  cartItems.value = cartItems.value.filter((i) => i.id !== id);
+  const item = cartItems.value.find((i) => i.id === id);
+  if (!item) return;
+  runVoid([{ id, quantity: item.quantity }], () => {
+    cartItems.value = cartItems.value.filter((i) => i.id !== id);
+    if (!cartItems.value.length) cartDiscount.value = 0;
+  });
 };
 
-const clearCart = () => {
+const resetCart = () => {
   cartItems.value = [];
+  cartDiscount.value = 0;
+  focusScan();
+};
+
+const clearCart = () => runVoid(cartItems.value.map((i) => ({ id: i.id, quantity: i.quantity })), resetCart);
+
+const editLineDiscount = async (item: CartItem) => {
+  const n = await discountDialog.value?.ask({ title: item.name, base: item.price * item.quantity, current: item.discount });
+  if (n != null) item.discount = roundMoney(n);
+  focusScan();
+};
+
+const editCartDiscount = async () => {
+  const n = await discountDialog.value?.ask({
+    title: t("discount.wholeSale"),
+    base: subtotal.value - lineDiscounts.value,
+    current: cartDiscount.value,
+  });
+  if (n != null) cartDiscount.value = roundMoney(n);
   focusScan();
 };
 
@@ -153,18 +232,34 @@ const reloadProducts = async () => {
   products.value = await listProducts();
 };
 
-// Rust recomputes prices from the database; only ids and quantities go over
+// Rust recomputes prices from the database; only ids, quantities and
+// discount amounts go over
 const checkout = async () => {
   if (!cartItems.value.length || charging.value) return;
-  charging.value = true;
   chargeError.value = "";
+  let tendered: number | null = null;
+  if (payment.value === "cash") {
+    tendered = (await cashDialog.value?.ask(total.value)) ?? null;
+    if (tendered === null) return focusScan();
+  }
+  let overrideToken: string | null = null;
+  if (discount.value > 0 && !auth.can("sales.discount")) {
+    const grant = await pinDialog.value?.ask("sales.discount");
+    if (!grant) return focusScan();
+    overrideToken = grant.token;
+  }
+  charging.value = true;
   try {
-    const sale = await call<{ receiptNumber: string; total: number }>("checkout", {
-      lines: cartItems.value.map((i) => ({ productId: i.id, quantity: i.quantity })),
+    const sale = await call<SaleResult>("checkout", {
+      lines: cartItems.value.map((i) => ({ productId: i.id, quantity: i.quantity, discount: i.discount })),
+      cartDiscount: cartDiscount.value,
       paymentMethod: payment.value,
+      tendered,
+      overrideToken,
     });
     lastSale.value = sale;
-    clearCart();
+    resetCart();
+    if (autoPrint.value) print(sale.id);
     await reloadProducts();
   } catch (e) {
     chargeError.value = errorMessage(e);
@@ -173,13 +268,20 @@ const checkout = async () => {
   }
 };
 
+const print = (id: number) =>
+  printReceipt(id).catch((e) => (chargeError.value = errorMessage(e)));
+
 onMounted(async () => {
   focusScan();
-  [categories.value, products.value] = await Promise.all([
+  const [cats, prods, , auto] = await Promise.all([
     listCategories(),
     listProducts(),
     loadShop(),
+    getSetting("auto_print"),
   ]);
+  categories.value = cats;
+  products.value = prods;
+  autoPrint.value = auto === "1";
   catalogLoaded.value = true;
 });
 </script>
@@ -254,7 +356,7 @@ onMounted(async () => {
             >
               <AppIcon :icon="c.icon_key" :size="16" />
             </span>
-            {{ localized(c, "name") }}
+            {{ c.name }}
           </button>
         </div>
         <!-- Second row: the chosen category's subcategories -->
@@ -274,7 +376,7 @@ onMounted(async () => {
             class="flex h-8 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-colors hover:border-foreground/30 aria-selected:border-foreground aria-selected:bg-foreground aria-selected:text-background"
           >
             <AppIcon :icon="c.icon_key" :size="14" />
-            {{ localized(c, "name") }}
+            {{ c.name }}
           </button>
         </div>
       </div>
@@ -307,7 +409,7 @@ onMounted(async () => {
             <ProductThumb :product="p" :size="44" class="bg-card/60!" />
             <span
               class="line-clamp-2 text-[15px] leading-snug font-semibold text-foreground"
-              ><bdi>{{ localized(p, "name") }}</bdi></span
+              ><bdi>{{ p.name }}</bdi></span
             >
             <span class="mt-auto flex items-end justify-between gap-2">
               <span class="text-lg font-semibold text-foreground">{{
@@ -342,7 +444,12 @@ onMounted(async () => {
         <header class="px-5 pt-5 pb-3">
           <div class="flex items-baseline justify-between">
             <h2 class="text-base font-semibold">{{ $t("pos.receipt") }}</h2>
-            <span class="text-sm text-muted-foreground">{{ $t("pos.newSale") }}</span>
+            <RouterLink
+              to="/main/point-of-sale/history"
+              class="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+            >
+              <History :size="15" /> {{ $t("history.title") }}
+            </RouterLink>
           </div>
           <p class="text-sm text-muted-foreground">
             {{ $t("pos.items", itemCount) }}
@@ -362,6 +469,13 @@ onMounted(async () => {
             <span class="font-semibold">{{ $t("pos.saleDone") }}</span>
             <span class="num text-sm text-muted-foreground" dir="ltr">{{ lastSale.receiptNumber }}</span>
             <span class="text-2xl font-bold">{{ formatCurrency(lastSale.total) }}</span>
+            <span v-if="lastSale.change" class="mt-2 rounded-lg bg-success/10 px-4 py-2 text-success">
+              {{ $t("cash.change") }}
+              <span class="num block text-3xl font-bold">{{ formatCurrency(lastSale.change) }}</span>
+            </span>
+            <Button variant="outline" size="sm" class="mt-2" @click="print(lastSale.id)">
+              <Printer /> {{ $t("receipt.print") }}
+            </Button>
           </li>
           <li
             v-else-if="cartItems.length === 0"
@@ -379,9 +493,12 @@ onMounted(async () => {
               <span class="min-w-0 flex-1 text-[15px] leading-snug font-medium">
                 <bdi>{{ item.name }}</bdi>
               </span>
-              <span class="num font-semibold">{{
-                formatCurrency(item.price * item.quantity)
-              }}</span>
+              <span class="text-end">
+                <span class="num block font-semibold">{{ formatCurrency(item.price * item.quantity - item.discount) }}</span>
+                <span v-if="item.discount" class="num block text-xs text-muted-foreground line-through">{{
+                  formatCurrency(item.price * item.quantity)
+                }}</span>
+              </span>
             </div>
             <div class="mt-1.5 flex items-center gap-1">
               <button
@@ -408,9 +525,18 @@ onMounted(async () => {
               >
               <button
                 type="button"
+                @click="editLineDiscount(item)"
+                :aria-label="$t('discount.title')"
+                class="ms-auto grid size-7 place-items-center rounded-md transition-opacity hover:bg-accent focus-visible:opacity-100"
+                :class="item.discount ? 'text-primary' : 'text-muted-foreground opacity-0 group-hover:opacity-100'"
+              >
+                <Percent :size="15" />
+              </button>
+              <button
+                type="button"
                 @click="removeFromCart(item.id)"
-                :aria-label="$t('settings.delete')"
-                class="ms-auto grid size-7 place-items-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
+                :aria-label="$t('pos.voidLine')"
+                class="grid size-7 place-items-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
               >
                 <X :size="16" />
               </button>
@@ -423,6 +549,19 @@ onMounted(async () => {
           <div class="flex justify-between">
             <dt class="text-muted-foreground">{{ $t("pos.subtotal") }}</dt>
             <dd class="num">{{ formatCurrency(subtotal) }}</dd>
+          </div>
+          <div class="flex justify-between">
+            <dt>
+              <button
+                type="button"
+                class="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:no-underline disabled:opacity-50"
+                :disabled="cartItems.length === 0"
+                @click="editCartDiscount"
+              >
+                {{ discount ? $t("receipt.discount") : $t("discount.add") }}
+              </button>
+            </dt>
+            <dd v-if="discount" class="num text-primary">−{{ formatCurrency(discount) }}</dd>
           </div>
           <div v-if="taxRate > 0" class="flex justify-between">
             <dt class="text-muted-foreground">
@@ -499,5 +638,8 @@ onMounted(async () => {
         </Button>
       </div>
     </aside>
+    <ManagerPinDialog ref="pinDialog" />
+    <DiscountDialog ref="discountDialog" />
+    <CashDialog ref="cashDialog" />
   </div>
 </template>

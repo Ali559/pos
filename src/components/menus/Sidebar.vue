@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import {
   ChartColumn,
   Clock,
@@ -19,8 +19,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import EndShiftDialog from "@/components/sales/EndShiftDialog.vue";
 import { MAIN_ROUTES, useAuth } from "@/stores/auth";
-import { localized } from "@/utils/i18n";
 
 const router = useRouter();
 const route = useRoute();
@@ -56,10 +56,7 @@ const logout = async () => {
   await auth.logout();
   router.replace("/");
 };
-const endShift = async () => {
-  await auth.endShift();
-  router.replace("/");
-};
+const endingShift = ref(false);
 </script>
 
 <template>
@@ -71,7 +68,7 @@ const endShift = async () => {
         <button
           type="button"
           @click="router.push(item.to)"
-          :aria-current="route.path === item.to ? 'page' : undefined"
+          :aria-current="route.path === item.to || route.path.startsWith(item.to + '/') ? 'page' : undefined"
           class="group relative flex w-full flex-col items-center gap-1 rounded-lg px-1 py-2.5 text-[11px] leading-tight font-medium transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none aria-[current=page]:bg-sidebar-accent aria-[current=page]:text-sidebar-accent-foreground"
         >
           <span
@@ -102,7 +99,7 @@ const endShift = async () => {
         <DropdownMenuLabel class="font-normal">
           <div class="font-semibold">{{ auth.user.value.fullName }}</div>
           <div class="text-xs text-muted-foreground">
-            {{ localized(auth.user.value, "roleName") }}
+            {{ auth.user.value.roleName }}
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
@@ -112,12 +109,13 @@ const endShift = async () => {
         </DropdownMenuItem>
         <DropdownMenuItem
           class="cursor-pointer gap-2 text-destructive focus:text-destructive"
-          @click="endShift"
+          @click="endingShift = true"
         >
           <Clock class="size-4" />
           {{ $t("sidebar.endShift") }}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    <EndShiftDialog v-model:open="endingShift" @ended="router.replace('/')" />
   </nav>
 </template>

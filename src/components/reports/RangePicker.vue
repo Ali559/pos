@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Input } from "@/components/ui/input";
+import DateInput from "@/components/pickers/DateInput.vue";
 import {
   Select,
   SelectContent,
@@ -56,22 +56,20 @@ export const resolveRange = (m: { preset: Preset; from?: string; to?: string }):
       </SelectContent>
     </Select>
     <template v-if="custom">
-      <Input
+      <DateInput
         :model-value="model.from"
-        type="date"
-        dir="ltr"
-        class="w-40"
+        class="w-48"
+        :max="model.to"
         :aria-label="$t('range.from')"
-        @update:model-value="model = { ...model, from: String($event) }"
+        @update:model-value="model = { ...model, from: $event ?? undefined }"
       />
       <span class="text-muted-foreground">–</span>
-      <Input
+      <DateInput
         :model-value="model.to"
-        type="date"
-        dir="ltr"
-        class="w-40"
+        class="w-48"
+        :min="model.from"
         :aria-label="$t('range.to')"
-        @update:model-value="model = { ...model, to: String($event) }"
+        @update:model-value="model = { ...model, to: $event ?? undefined }"
       />
     </template>
   </div>

@@ -13,7 +13,6 @@ import { listNotifications, type AppNotification, type NotificationKind } from "
 import { call } from "@/lib/ipc";
 import { formatCurrency } from "@/lib/format";
 import { useAuth } from "@/stores/auth";
-import { localized } from "@/utils/i18n";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -79,7 +78,7 @@ const text = (n: AppNotification) => {
     case "expired":
       return t("alerts.expired", { name: iso(p.name), quantity: iso(p.quantity), date: iso(p.expiry) });
     case "expense_due":
-      return t("alerts.expenseDue", { name: iso(localized(p, "name")), amount: iso(formatCurrency(Number(p.amount))), date: iso(p.date) });
+      return t("alerts.expenseDue", { name: iso(String(p.name)), amount: iso(formatCurrency(Number(p.amount))), date: iso(p.date) });
   }
 };
 

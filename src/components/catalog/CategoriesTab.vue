@@ -29,7 +29,6 @@ import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
 import { categoryInk, categoryTint } from "@/lib/categoryColor";
 import { useAuth } from "@/stores/auth";
-import { localized } from "@/utils/i18n";
 
 const emit = defineEmits<{ changed: [] }>();
 const auth = useAuth();
@@ -75,7 +74,7 @@ const remove = (c: Category) => run(() => call("delete_category", { id: c.id }))
 const open = ref(false);
 const editing = ref<Category | null>(null);
 const form = ref({
-  name: "", name_ku: "", name_ar: "", description: "",
+  name: "", description: "",
   parentId: "none", iconKey: null as string | null, color: null as string | null,
 });
 const saving = ref(false);
@@ -84,7 +83,7 @@ const error = ref("");
 const startCreate = (parent: Category | null = null) => {
   editing.value = null;
   form.value = {
-    name: "", name_ku: "", name_ar: "", description: "",
+    name: "", description: "",
     parentId: parent ? String(parent.id) : "none",
     iconKey: null,
     color: parent ? null : COLORS[roots.value.length % COLORS.length],
@@ -97,8 +96,6 @@ const startEdit = (c: Category) => {
   editing.value = c;
   form.value = {
     name: c.name,
-    name_ku: c.name_ku ?? "",
-    name_ar: c.name_ar ?? "",
     description: c.description ?? "",
     parentId: c.parent_id ? String(c.parent_id) : "none",
     iconKey: c.icon_key,
@@ -115,7 +112,7 @@ const parentOptions = computed(() =>
   all.value.filter((c) => c.parent_id === null && c.is_active && c.id !== editing.value?.id),
 );
 const hasChildren = computed(() => !!editing.value && all.value.some((c) => c.parent_id === editing.value!.id));
-const suggestText = computed(() => [form.value.name, form.value.name_ku, form.value.name_ar].join(" "));
+const suggestText = computed(() => form.value.name);
 const previewColor = computed(() => form.value.color ?? parent.value?.color ?? null);
 
 const save = async () => {
@@ -125,8 +122,6 @@ const save = async () => {
   }
   const category = {
     name: form.value.name,
-    nameKu: form.value.name_ku,
-    nameAr: form.value.name_ar,
     description: form.value.description,
     parentId: parent.value?.id ?? null,
     iconKey: form.value.iconKey,
@@ -183,7 +178,7 @@ const save = async () => {
             </div>
             <div class="min-w-0 flex-1">
               <div class="truncate" :class="j === 0 ? 'font-semibold' : 'font-medium'">
-                {{ localized(c, "name") }}
+                {{ c.name }}
               </div>
               <div class="text-xs text-muted-foreground">
                 {{ $t("catalog.productCount", c.product_count) }}
@@ -254,19 +249,9 @@ const save = async () => {
       :title="editing ? $t('catalog.editCategory') : parent ? $t('catalog.addSubcategory') : $t('catalog.addCategory')"
       @submit="save"
     >
-      <div class="grid gap-4 sm:grid-cols-3">
-        <div class="space-y-2">
-          <Label for="c-en">{{ $t("catalog.nameEn") }}</Label>
-          <Input id="c-en" v-model="form.name" required lang="en" dir="ltr" />
-        </div>
-        <div class="space-y-2">
-          <Label for="c-ku">{{ $t("catalog.nameKu") }}</Label>
-          <Input id="c-ku" v-model="form.name_ku" lang="ku" dir="rtl" />
-        </div>
-        <div class="space-y-2">
-          <Label for="c-ar">{{ $t("catalog.nameAr") }}</Label>
-          <Input id="c-ar" v-model="form.name_ar" lang="ar" dir="rtl" />
-        </div>
+      <div class="space-y-2">
+        <Label for="c-name">{{ $t("catalog.name") }}</Label>
+        <Input id="c-name" v-model="form.name" required dir="auto" />
       </div>
 
       <div class="space-y-2">
@@ -276,7 +261,7 @@ const save = async () => {
           <SelectContent>
             <SelectItem value="none">{{ $t("catalog.topLevel") }}</SelectItem>
             <SelectItem v-for="p in parentOptions" :key="p.id" :value="String(p.id)">
-              {{ localized(p, "name") }}
+              {{ p.name }}
             </SelectItem>
           </SelectContent>
         </Select>

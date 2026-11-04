@@ -14,15 +14,42 @@ pub struct SessionKey {
     pub user_id: i64,
 }
 
+/// A manager's PIN approval for one action the cashier can't do alone.
+/// Single use and short-lived; see `auth::authorize_override`.
+#[derive(Debug, Clone)]
+pub struct Override {
+    pub token: String,
+    pub permission: String,
+    pub approver_id: i64,
+    pub expires: std::time::Instant,
+}
+
 #[derive(Default)]
-pub struct SessionState(pub Mutex<Option<SessionKey>>);
+pub struct SessionState {
+    key: Mutex<Option<SessionKey>>,
+    overrides: Mutex<Vec<Override>>,
+}
 
 impl SessionState {
     pub fn get(&self) -> Option<SessionKey> {
-        *self.0.lock().unwrap()
+        *self.key.lock().unwrap()
     }
+    /// Changing who is signed in drops any pending approvals
     pub fn set(&self, key: Option<SessionKey>) {
-        *self.0.lock().unwrap() = key;
+        *self.key.lock().unwrap() = key;
+        self.overrides.lock().unwrap().clear();
+    }
+    pub fn add_override(&self, o: Override) {
+        let mut list = self.overrides.lock().unwrap();
+        list.retain(|x| x.expires > std::time::Instant::now());
+        list.push(o);
+    }
+    /// Removes and returns the approver if the token is valid for `permission`.
+    pub fn take_override(&self, token: &str, permission: &str) -> Option<i64> {
+        let mut list = self.overrides.lock().unwrap();
+        let now = std::time::Instant::now();
+        let i = list.iter().position(|o| o.token == token && o.permission == permission && o.expires > now)?;
+        Some(list.remove(i).approver_id)
     }
 }
 

@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { Loader2, Plus, X } from "lucide-vue-next";
+import DateInput from "@/components/pickers/DateInput.vue";
+import { computed, nextTick, ref, watch } from "vue";
+import { Loader2, Plus, ScanBarcode, X } from "lucide-vue-next";
+import { useI18n } from "vue-i18n";
+import { guessCategory, lookupBarcode } from "@/lib/barcodeLookup";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,7 +22,6 @@ import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
 import { formatCurrency } from "@/lib/format";
 import type { MediaFile } from "@/lib/media";
-import { localized } from "@/utils/i18n";
 
 const open = defineModel<boolean>("open", { required: true });
 const props = defineProps<{
@@ -27,12 +29,17 @@ const props = defineProps<{
   productId: number | null;
   categories: Category[];
 }>();
-const emit = defineEmits<{ saved: [] }>();
+const emit = defineEmits<{
+  saved: [];
+  /** The scanned barcode already belongs to this product: open it instead */
+  switch: [id: number];
+}>();
 
+const { t } = useI18n();
 const UNITS = ["piece", "kg", "liter", "pack", "box"] as const;
 
 const blank = () => ({
-  name: "", name_ku: "", name_ar: "", sku: "", categoryId: "none",
+  name: "", sku: "", categoryId: "none",
   barcode: "", extraBarcodes: [] as string[], costPrice: "", sellingPrice: "",
   minStock: "0", unit: "piece" as string, iconKey: null as string | null,
   isActive: true, initialStock: "0", initialExpiry: "", stock: 0,
@@ -44,21 +51,30 @@ const saving = ref(false);
 const uploading = ref(false);
 const loading = ref(false);
 const error = ref("");
+const scanInput = ref<HTMLInputElement | null>(null);
+const looking = ref(false);
+// What the last scan did, shown under the barcode field
+const scanNote = ref<{ tone: "info" | "warn"; text: string } | null>(null);
+// Survives the reload when a scan switches to an existing product
+let carriedNote: typeof scanNote.value = null;
 
-watch(open, async (isOpen) => {
-  if (!isOpen) return;
+const load = async () => {
   error.value = "";
+  scanNote.value = carriedNote;
+  carriedNote = null;
   form.value = blank();
   images.value = [];
-  if (props.productId === null) return;
+  if (props.productId === null) {
+    // New product: the cursor waits in the barcode field for a scan
+    nextTick(() => scanInput.value?.focus());
+    return;
+  }
   loading.value = true;
   const p = await getProduct(props.productId);
   loading.value = false;
   if (!p) return;
   form.value = {
     name: p.name,
-    name_ku: p.name_ku ?? "",
-    name_ar: p.name_ar ?? "",
     sku: p.sku,
     categoryId: p.category_id ? String(p.category_id) : "none",
     barcode: p.barcode ?? "",
@@ -74,19 +90,54 @@ watch(open, async (isOpen) => {
     stock: p.stock_quantity,
   };
   images.value = p.media;
-});
+};
+watch(open, (isOpen) => isOpen && load());
+watch(() => props.productId, () => open.value && load());
+
+// Scanners type the code and press Enter. A known barcode opens that
+// product; a new one is looked up online to fill what's still empty.
+const onScan = async () => {
+  const code = form.value.barcode.trim();
+  if (!code || props.productId !== null || looking.value) return;
+  looking.value = true;
+  scanNote.value = null;
+  try {
+    const r = await lookupBarcode(code);
+    if (r.existingProductId) {
+      carriedNote = { tone: "info", text: t("catalog.scan.exists") };
+      emit("switch", r.existingProductId);
+      return;
+    }
+    if (r.source === "openfoodfacts") {
+      if (!form.value.name && r.name) form.value.name = r.name;
+      if (!images.value.length && r.image) images.value = [r.image];
+      if (form.value.categoryId === "none") {
+        const guess = guessCategory(r.categoryTags, props.categories);
+        if (guess) form.value.categoryId = String(guess.id);
+      }
+      scanNote.value = { tone: "info", text: t("catalog.scan.filled") };
+    } else {
+      scanNote.value = { tone: "warn", text: r.offline ? t("catalog.scan.offline") : t("catalog.scan.unknown") };
+    }
+    nextTick(() => document.getElementById(form.value.name ? "p-price" : "p-name")?.focus());
+  } catch (e) {
+    scanNote.value = { tone: "warn", text: errorMessage(e) };
+  } finally {
+    looking.value = false;
+  }
+};
 
 // Subcategories listed under their parent
 const categoryOptions = computed(() =>
   props.categories.filter((c) => c.is_active).map((c) => ({
     id: c.id,
-    label: (c.parent_id ? "— " : "") + localized(c, "name"),
+    label: (c.parent_id ? "— " : "") + c.name,
   })),
 );
 const selectedCategory = computed(() =>
   props.categories.find((c) => c.id === Number(form.value.categoryId)),
 );
-const suggestText = computed(() => [form.value.name, form.value.name_ku, form.value.name_ar].join(" "));
+const suggestText = computed(() => form.value.name);
 
 const margin = computed(() => {
   const cost = Number(form.value.costPrice);
@@ -99,8 +150,6 @@ const save = async () => {
   const f = form.value;
   const product = {
     name: f.name,
-    nameKu: f.name_ku,
-    nameAr: f.name_ar,
     sku: f.sku,
     categoryId: f.categoryId === "none" ? null : Number(f.categoryId),
     barcode: f.barcode,
@@ -138,6 +187,35 @@ const save = async () => {
   >
     <div v-if="loading" class="grid place-items-center py-20"><Loader2 class="animate-spin" /></div>
     <template v-else>
+      <!-- Barcode first: scanning fills the rest when it can -->
+      <div class="space-y-2">
+        <Label for="p-barcode">{{ $t("inventory.table.barcode") }}</Label>
+        <div class="relative">
+          <ScanBarcode :size="18" class="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-primary" />
+          <input
+            id="p-barcode"
+            ref="scanInput"
+            v-model="form.barcode"
+            dir="ltr"
+            inputmode="numeric"
+            autocomplete="off"
+            :placeholder="productId === null ? $t('catalog.scan.placeholder') : ''"
+            class="num h-11 w-full rounded-md border-2 border-input bg-card ps-10 pe-10 text-base outline-none focus-visible:border-primary"
+            @keydown.enter.prevent="onScan"
+          />
+          <Loader2 v-if="looking" :size="18" class="absolute end-3 top-1/2 -translate-y-1/2 animate-spin text-muted-foreground" />
+        </div>
+        <p
+          v-if="scanNote"
+          role="status"
+          class="text-sm"
+          :class="scanNote.tone === 'warn' ? 'text-warning' : 'text-muted-foreground'"
+        >
+          {{ scanNote.text }}
+        </p>
+        <p v-else-if="productId === null" class="text-xs text-muted-foreground">{{ $t("catalog.scan.hint") }}</p>
+      </div>
+
       <div class="space-y-2">
         <Label>{{ $t("catalog.photos") }}</Label>
         <MediaGallery v-model="images" v-model:busy="uploading" />
@@ -147,23 +225,6 @@ const save = async () => {
         <Label for="p-name">{{ $t("catalog.productName") }}</Label>
         <Input id="p-name" v-model="form.name" required dir="auto" />
       </div>
-      <div class="grid gap-4 sm:grid-cols-2">
-        <div class="space-y-2">
-          <Label for="p-ku">
-            {{ $t("catalog.nameKu") }}
-            <span class="font-normal text-muted-foreground">({{ $t("common.optional") }})</span>
-          </Label>
-          <Input id="p-ku" v-model="form.name_ku" lang="ku" dir="rtl" />
-        </div>
-        <div class="space-y-2">
-          <Label for="p-ar">
-            {{ $t("catalog.nameAr") }}
-            <span class="font-normal text-muted-foreground">({{ $t("common.optional") }})</span>
-          </Label>
-          <Input id="p-ar" v-model="form.name_ar" lang="ar" dir="rtl" />
-        </div>
-      </div>
-
       <div class="space-y-2">
         <Label>{{ $t("inventory.table.category") }}</Label>
         <Select v-model="form.categoryId" :key="$i18n.locale">
@@ -219,8 +280,7 @@ const save = async () => {
       </div>
 
       <fieldset class="space-y-2">
-        <legend class="mb-2 text-sm font-medium">{{ $t("inventory.table.barcode") }}</legend>
-        <Input v-model="form.barcode" dir="ltr" inputmode="numeric" :aria-label="$t('inventory.table.barcode')" />
+        <legend class="mb-2 text-sm font-medium">{{ $t("catalog.extraBarcodes") }}</legend>
         <div v-for="(_, i) in form.extraBarcodes" :key="i" class="flex gap-2">
           <Input v-model="form.extraBarcodes[i]" dir="ltr" inputmode="numeric" :aria-label="$t('catalog.extraBarcode')" />
           <Button
@@ -253,7 +313,7 @@ const save = async () => {
             {{ $t("stock.expiry") }}
             <span class="font-normal text-muted-foreground">({{ $t("common.optional") }})</span>
           </Label>
-          <Input id="p-expiry" v-model="form.initialExpiry" type="date" dir="ltr" />
+          <DateInput id="p-expiry" v-model="form.initialExpiry" clearable :placeholder="$t('stock.noExpiry')" />
         </div>
         <div v-else class="space-y-2">
           <Label>{{ $t("catalog.currentStock") }}</Label>

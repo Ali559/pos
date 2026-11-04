@@ -14,35 +14,60 @@ pub struct SetSettingArgs {
     pub value: String,
 }
 
+fn flag(value: &str) -> Result<()> {
+    if matches!(value, "0" | "1") {
+        Ok(())
+    } else {
+        Err(Error::Invalid("expected 0 or 1".into()))
+    }
+}
+
 /// Only known keys, each with its own rule for who may change it.
 pub async fn set_setting(ctx: &Ctx, args: SetSettingArgs) -> Result<()> {
+    let v = args.value.as_str();
     let actor = match args.key.as_str() {
-        // Anyone, even before sign-in: the language picker is on the login screen
+        // Chosen once during first-run setup, then fixed: every name in the
+        // shop is written in this language
         "language" => {
-            if !matches!(args.value.as_str(), "ku" | "ar" | "en") {
-                return Err(Error::Invalid(format!("unknown language {}", args.value)));
+            if !auth::needs_setup(ctx).await? {
+                return Err(Error::Rule("language_locked"));
+            }
+            if !matches!(v, "ku" | "ar" | "en") {
+                return Err(Error::Invalid(format!("unknown language {v}")));
             }
             None
         }
+        "tax_rate" => {
+            let actor = auth::require(ctx, "settings.system").await?;
+            match v.parse::<f64>() {
+                Ok(n) if (0.0..=100.0).contains(&n) => Some(actor),
+                _ => return Err(Error::Rule("tax_rate_range")),
+            }
+        }
         "expiry_warn_days" => {
             let actor = auth::require(ctx, "settings.system").await?;
-            match args.value.parse::<u32>() {
-                Ok(v) if v <= 90 => Some(actor),
+            match v.parse::<u32>() {
+                Ok(n) if n <= 90 => Some(actor),
                 _ => return Err(Error::Invalid("expiry_warn_days must be 0–90".into())),
             }
         }
-        "os_notifications" => {
+        "os_notifications" | "barcode_lookup" | "auto_print" => {
             let actor = auth::require(ctx, "settings.system").await?;
-            if !matches!(args.value.as_str(), "0" | "1") {
-                return Err(Error::Invalid("os_notifications must be 0 or 1".into()));
+            flag(v)?;
+            Some(actor)
+        }
+        "receipt_width" => {
+            let actor = auth::require(ctx, "settings.system").await?;
+            if !matches!(v, "58" | "80") {
+                return Err(Error::Invalid("receipt_width must be 58 or 80".into()));
             }
             Some(actor)
         }
-        "tax_rate" => {
+        "opening_float" => {
             let actor = auth::require(ctx, "settings.system").await?;
-            match args.value.parse::<f64>() {
-                Ok(v) if (0.0..=100.0).contains(&v) => Some(actor),
-                _ => return Err(Error::Rule("tax_rate_range")),
+            match v.parse::<f64>() {
+                Ok(n) if n >= 0.0 => Some(actor),
+                _ => return Err(Error::Rule("negative_amount")),
             }
         }
         other => return Err(Error::Invalid(format!("unknown setting {other}"))),
@@ -52,41 +77,46 @@ pub async fn set_setting(ctx: &Ctx, args: SetSettingArgs) -> Result<()> {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
     )
     .bind(&args.key)
-    .bind(&args.value)
+    .bind(v)
     .bind(now())
     .execute(&ctx.pool)
     .await?;
     if let Some(actor) = actor {
-        audit::log(ctx, Some(actor.user_id), "setting", "settings", None, &serde_json::json!({ args.key: args.value })).await?;
+        audit::log(ctx, Some(actor.user_id), "setting", "settings", None, &serde_json::json!({ args.key: v })).await?;
     }
     Ok(())
 }
 
-/// Mirrors `ShopProfile` in src/db/shop.ts.
+pub async fn get(ctx: &Ctx, key: &str, default: &str) -> Result<String> {
+    let row: Option<(Option<String>,)> = sqlx::query_as("SELECT value FROM settings WHERE key = $1")
+        .bind(key)
+        .fetch_optional(&ctx.pool)
+        .await?;
+    Ok(row.and_then(|(v,)| v).unwrap_or_else(|| default.to_owned()))
+}
+
+pub const SHOP_TYPES: &[&str] = &["mini_market", "supermarket", "other"];
+
+/// Mirrors `ShopProfile` in src/db/shop.ts. Names are in the shop's language.
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ShopProfileInput {
-    pub name_en: String,
-    pub name_ku: String,
-    pub name_ar: Option<String>,
+    pub name: String,
+    pub shop_type: String,
     pub logo_media_id: Option<i64>,
     pub phone: Option<String>,
     pub phone_alt: Option<String>,
-    pub address_en: Option<String>,
-    pub address_ku: Option<String>,
-    pub address_ar: Option<String>,
+    pub address: Option<String>,
     pub tax_number: Option<String>,
-    pub receipt_footer_en: Option<String>,
-    pub receipt_footer_ku: Option<String>,
-    pub receipt_footer_ar: Option<String>,
+    pub receipt_footer: Option<String>,
     pub currency: String,
 }
 
 impl ShopProfileInput {
     #[cfg(test)]
-    pub fn named(en: &str, ku: &str) -> Self {
+    pub fn named(name: &str) -> Self {
         Self {
-            name_en: en.into(),
-            name_ku: ku.into(),
+            name: name.into(),
+            shop_type: "mini_market".into(),
             currency: "IQD".into(),
             ..Default::default()
         }
@@ -99,41 +129,34 @@ fn opt(v: &Option<String>) -> Option<&str> {
 }
 
 pub async fn upsert_shop_profile(ctx: &Ctx, p: &ShopProfileInput) -> Result<()> {
-    let (name_en, name_ku) = (p.name_en.trim(), p.name_ku.trim());
-    if name_en.is_empty() || name_ku.is_empty() {
-        return Err(Error::Rule("shop_names_required"));
+    if p.name.trim().is_empty() {
+        return Err(Error::Rule("shop_name_required"));
     }
     if !matches!(p.currency.as_str(), "IQD" | "USD") {
         return Err(Error::Invalid(format!("unsupported currency {}", p.currency)));
     }
+    if !SHOP_TYPES.contains(&p.shop_type.as_str()) {
+        return Err(Error::Invalid(format!("unknown shop type {}", p.shop_type)));
+    }
     sqlx::query(
-        "INSERT INTO shop_profile (id, name_en, name_ku, name_ar, logo_media_id, phone, phone_alt,
-            address_en, address_ku, address_ar, tax_number,
-            receipt_footer_en, receipt_footer_ku, receipt_footer_ar, currency, updated_at)
-         VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        "INSERT INTO shop_profile (id, name, shop_type, logo_media_id, phone, phone_alt, address,
+            tax_number, receipt_footer, currency, updated_at)
+         VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT(id) DO UPDATE SET
-            name_en = excluded.name_en, name_ku = excluded.name_ku, name_ar = excluded.name_ar,
+            name = excluded.name, shop_type = excluded.shop_type,
             logo_media_id = excluded.logo_media_id, phone = excluded.phone,
-            phone_alt = excluded.phone_alt, address_en = excluded.address_en,
-            address_ku = excluded.address_ku, address_ar = excluded.address_ar,
-            tax_number = excluded.tax_number, receipt_footer_en = excluded.receipt_footer_en,
-            receipt_footer_ku = excluded.receipt_footer_ku,
-            receipt_footer_ar = excluded.receipt_footer_ar, currency = excluded.currency,
-            updated_at = excluded.updated_at",
+            phone_alt = excluded.phone_alt, address = excluded.address,
+            tax_number = excluded.tax_number, receipt_footer = excluded.receipt_footer,
+            currency = excluded.currency, updated_at = excluded.updated_at",
     )
-    .bind(name_en)
-    .bind(name_ku)
-    .bind(opt(&p.name_ar))
+    .bind(p.name.trim())
+    .bind(&p.shop_type)
     .bind(p.logo_media_id)
     .bind(opt(&p.phone))
     .bind(opt(&p.phone_alt))
-    .bind(opt(&p.address_en))
-    .bind(opt(&p.address_ku))
-    .bind(opt(&p.address_ar))
+    .bind(opt(&p.address))
     .bind(opt(&p.tax_number))
-    .bind(opt(&p.receipt_footer_en))
-    .bind(opt(&p.receipt_footer_ku))
-    .bind(opt(&p.receipt_footer_ar))
+    .bind(opt(&p.receipt_footer))
     .bind(&p.currency)
     .bind(now())
     .execute(&ctx.pool)
@@ -165,10 +188,13 @@ mod tests {
             set_setting(&ctx, SetSettingArgs { key: "language".into(), value: "ar".into() })
                 .await
                 .unwrap();
+            // …but only until setup is done
             let r = set_setting(&ctx, SetSettingArgs { key: "tax_rate".into(), value: "5".into() }).await;
             assert!(matches!(r, Err(Error::NotSignedIn)));
 
             setup_owner(&ctx).await;
+            let r = set_setting(&ctx, SetSettingArgs { key: "language".into(), value: "en".into() }).await;
+            assert!(matches!(r, Err(Error::Rule("language_locked"))));
             set_setting(&ctx, SetSettingArgs { key: "tax_rate".into(), value: "5".into() })
                 .await
                 .unwrap();

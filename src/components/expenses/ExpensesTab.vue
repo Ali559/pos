@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DateInput from "@/components/pickers/DateInput.vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { Check, Image, Loader2, Pencil, Plus, Repeat, Trash2 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,6 @@ import { errorMessage } from "@/lib/errors";
 import { formatCurrency } from "@/lib/format";
 import type { MediaFile } from "@/lib/media";
 import { useAuth } from "@/stores/auth";
-import { localized } from "@/utils/i18n";
 
 const auth = useAuth();
 const canEdit = computed(() => auth.can("expenses.edit"));
@@ -147,7 +147,7 @@ const isDraftEdit = computed(() => editing.value?.status === "draft" || !!editin
         <SelectTrigger class="w-48"><SelectValue /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">{{ $t("expenses.allTypes") }}</SelectItem>
-          <SelectItem v-for="t in types" :key="t.id" :value="String(t.id)">{{ localized(t, "name") }}</SelectItem>
+          <SelectItem v-for="t in types" :key="t.id" :value="String(t.id)">{{ t.name }}</SelectItem>
         </SelectContent>
       </Select>
       <Button v-if="canEdit" size="lg" class="ms-auto" @click="startCreate">
@@ -164,7 +164,7 @@ const isDraftEdit = computed(() => editing.value?.status === "draft" || !!editin
       <ul class="divide-y rounded-lg border bg-card">
         <li v-for="e in drafts" :key="e.id" class="flex flex-wrap items-center gap-3 px-4 py-2.5">
           <AppIcon :icon="e.type_icon" :size="18" />
-          <span class="font-medium">{{ localized(e, "type_name") }}</span>
+          <span class="font-medium">{{ e.type_name }}</span>
           <span class="num text-sm text-muted-foreground" dir="ltr">{{ e.spent_on }}</span>
           <span class="ms-auto font-semibold">{{ formatCurrency(e.amount) }}</span>
           <template v-if="canEdit">
@@ -186,7 +186,7 @@ const isDraftEdit = computed(() => editing.value?.status === "draft" || !!editin
           <li v-for="{ e, sum } in byType" :key="e.type_id" class="space-y-1">
             <div class="flex items-center gap-2 text-sm">
               <AppIcon :icon="e.type_icon" :size="16" :style="{ color: categoryInk(e.type_color) }" />
-              <span class="flex-1">{{ localized(e, "type_name") }}</span>
+              <span class="flex-1">{{ e.type_name }}</span>
               <span class="num font-medium">{{ formatCurrency(sum) }}</span>
             </div>
             <div class="h-1.5 overflow-hidden rounded-full bg-muted">
@@ -209,7 +209,7 @@ const isDraftEdit = computed(() => editing.value?.status === "draft" || !!editin
             </span>
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2 font-medium">
-                {{ localized(e, "type_name") }}
+                {{ e.type_name }}
                 <Repeat v-if="e.recurring" :size="14" class="text-muted-foreground" :aria-label="$t(`expenses.repeat.${e.recurring}`)" />
                 <Image v-if="e.receipt" :size="14" class="text-muted-foreground" :aria-label="$t('expenses.hasReceipt')" />
               </div>
@@ -233,7 +233,7 @@ const isDraftEdit = computed(() => editing.value?.status === "draft" || !!editin
         <Select v-model="form.typeId" :key="$i18n.locale">
           <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem v-for="t in types" :key="t.id" :value="String(t.id)">{{ localized(t, "name") }}</SelectItem>
+            <SelectItem v-for="t in types" :key="t.id" :value="String(t.id)">{{ t.name }}</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -244,7 +244,7 @@ const isDraftEdit = computed(() => editing.value?.status === "draft" || !!editin
         </div>
         <div class="space-y-2">
           <Label for="x-date">{{ $t("schedule.date") }}</Label>
-          <Input id="x-date" v-model="form.spentOn" type="date" required dir="ltr" />
+          <DateInput id="x-date" v-model="form.spentOn" required />
         </div>
       </div>
       <div v-if="!isDraftEdit" class="space-y-2">

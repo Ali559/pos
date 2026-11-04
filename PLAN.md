@@ -255,10 +255,7 @@ Done 2026-11-04; see ARCHITECTURE.md → Money.
 - Expenses keep one currency (the shop's), like sales.
 
 **Left for later**
-- ⬜ Returns and refunds (`returns` tables exist; `sales.refund` permission exists).
-- ⬜ Discounts and removing lines with permission checks, manager override.
-- ⬜ Cash tendered / change due, end-of-shift cash count (`cash_drawers`).
-- ⬜ Receipt printing.
+- ✅ Returns, discounts, voids, manager override, cash/change, drawer count, receipts: see §5.
 - ⬜ Selling expired batches is allowed (they're used first); blocking it at the till is a shop decision.
 
 ### 4.1 Notifications
@@ -330,6 +327,28 @@ CREATE TABLE expenses (
 - Queries run in Rust or as parameterized SQL in `src/db/analytics.ts`; add indexes as needed (`sales(sale_date, user_id)`, `sale_items(product_id, sale_id)`).
 
 ---
+
+## 5. Register and one-language shops ✅
+
+Done 2026-11-05 (the "left for later" money items plus a round of requests).
+
+- **One language per shop.** Setup asks for Kurdish, Arabic or English first; it's locked afterwards (`set_setting("language")` refuses once set up) and every name is stored once, in that language. Migration `0006` folds the `name_ku`/`name_ar`/`name_en` columns into `name` using the shop's language; the language switcher is gone.
+- **Starter categories.** Setup asks for the shop type (mini market, supermarket, other) and offers the usual categories with icons, in all three languages (`src/data/starterCategories.ts`); all ticked by default.
+- **Rudaw** font for Kurdish and Arabic (bundled; proprietary, see `src/assets/fonts/FONTS.md`).
+- **Date and time pickers** (`components/pickers/`) replace the native inputs everywhere: themed, Saturday-first, in the UI language.
+- **Barcode-first products.** The product form starts at the barcode; a known barcode opens that product, an unknown one is looked up on Open Food Facts (name, brand, size, photo, category guess) when online and the `barcode_lookup` setting is on. **Quick add** (Inventory tab) is scan → price → Enter → next, receiving stock for known items.
+- **Discounts** per line and on the whole sale, spread into the sale lines so returns and reports see them. Without `sales.discount`, a manager's PIN approves (`authorize_override` → single-use token, 5 minutes, audited).
+- **Voids**: taking items off the cart needs `sales.void_line` or a manager's PIN and is audited.
+- **Cash**: tendered amount with banknote buttons, change due, both stored on the payment.
+- **Drawer**: each shift opens a `cash_drawers` row with the `opening_float` setting; End shift shows cash sales, refunds and the expected amount, takes the count and stores the difference.
+- **Sales history** (from the register): search or scan a receipt number, reprint (`sales.reprint`), return items. **Returns** refund what the line was charged (after discounts, plus tax), optionally restock, and are paid out as negative payments; reports count them on the day they happen.
+- **Receipts**: 58/80 mm print layout with logo, shop details, lines, discounts, tax, cash/change and a Code 128 barcode of the receipt number; optional print after every sale.
+
+**Left for later**
+- ⬜ Opening float is taken from the setting; there's no count at the start of a shift.
+- ⬜ Hold/park sale (the button is still a stub; `held_sales` exists).
+- ⬜ Receipt printing goes through the system print dialog; silent printing to a chosen thermal printer needs a printer plugin.
+- ⬜ Return without a receipt, exchanges.
 
 ## Order of work
 

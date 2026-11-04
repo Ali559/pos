@@ -12,7 +12,6 @@ import { categoryInk, categoryTint } from "@/lib/categoryColor";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
 import { useAuth } from "@/stores/auth";
-import { localized } from "@/utils/i18n";
 
 const auth = useAuth();
 const canEdit = computed(() => auth.can("expenses.edit"));
@@ -26,26 +25,26 @@ onMounted(load);
 
 const open = ref(false);
 const editing = ref<ExpenseType | null>(null);
-const form = ref({ name_en: "", name_ku: "", name_ar: "", iconKey: null as string | null, color: COLORS[0] as string | null });
+const form = ref({ name: "", iconKey: null as string | null, color: COLORS[0] as string | null });
 const saving = ref(false);
 const error = ref("");
 
 const startCreate = () => {
   editing.value = null;
-  form.value = { name_en: "", name_ku: "", name_ar: "", iconKey: null, color: COLORS[types.value.length % COLORS.length] };
+  form.value = { name: "", iconKey: null, color: COLORS[types.value.length % COLORS.length] };
   error.value = "";
   open.value = true;
 };
 const startEdit = (t: ExpenseType) => {
   editing.value = t;
-  form.value = { name_en: t.name_en, name_ku: t.name_ku, name_ar: t.name_ar ?? "", iconKey: t.icon_key, color: t.color };
+  form.value = { name: t.name, iconKey: t.icon_key, color: t.color };
   error.value = "";
   open.value = true;
 };
 
 const save = async () => {
   const f = form.value;
-  const type = { nameEn: f.name_en, nameKu: f.name_ku, nameAr: f.name_ar, iconKey: f.iconKey ?? "", color: f.color };
+  const type = { name: f.name, iconKey: f.iconKey ?? "", color: f.color };
   saving.value = true;
   error.value = "";
   try {
@@ -64,7 +63,7 @@ const toggle = async (t: ExpenseType) => {
   await call("set_expense_type_active", { id: t.id, active: !t.is_active });
   await load();
 };
-const suggestText = computed(() => [form.value.name_en, form.value.name_ku, form.value.name_ar].join(" "));
+const suggestText = computed(() => form.value.name);
 </script>
 
 <template>
@@ -78,7 +77,7 @@ const suggestText = computed(() => [form.value.name_en, form.value.name_ku, form
           <AppIcon :icon="t.icon_key" :size="22" />
         </span>
         <div class="min-w-0 flex-1">
-          <div class="truncate font-semibold">{{ localized(t, "name") }}</div>
+          <div class="truncate font-semibold">{{ t.name }}</div>
           <div v-if="!t.is_active" class="text-xs text-muted-foreground">{{ $t("catalog.archived") }}</div>
         </div>
         <template v-if="canEdit">
@@ -91,19 +90,9 @@ const suggestText = computed(() => [form.value.name_en, form.value.name_ku, form
     </ul>
 
     <EditSheet v-model:open="open" :title="editing ? $t('expenses.editType') : $t('expenses.addType')" @submit="save">
-      <div class="grid gap-4 sm:grid-cols-3">
-        <div class="space-y-2">
-          <Label for="t-en">{{ $t("catalog.nameEn") }}</Label>
-          <Input id="t-en" v-model="form.name_en" required lang="en" dir="ltr" />
-        </div>
-        <div class="space-y-2">
-          <Label for="t-ku">{{ $t("catalog.nameKu") }}</Label>
-          <Input id="t-ku" v-model="form.name_ku" required lang="ku" dir="rtl" />
-        </div>
-        <div class="space-y-2">
-          <Label for="t-ar">{{ $t("catalog.nameAr") }}</Label>
-          <Input id="t-ar" v-model="form.name_ar" lang="ar" dir="rtl" />
-        </div>
+      <div class="space-y-2">
+        <Label for="t-name">{{ $t("catalog.name") }}</Label>
+        <Input id="t-name" v-model="form.name" required dir="auto" />
       </div>
       <div class="space-y-2">
         <Label>{{ $t("catalog.icon") }}</Label>

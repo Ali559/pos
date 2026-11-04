@@ -6,10 +6,18 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Kurdish and Arabic UI font; see src/assets/fonts/FONTS.md for licensing */
 @font-face {
-  font-family: "Sarchia Makka";
-  src: url("./assets/fonts/60_Sarchia_Makka.woff") format("woff");
-  font-weight: 400 700;
+  font-family: "Rudaw";
+  src: url("./assets/fonts/rudaw-regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Rudaw";
+  src: url("./assets/fonts/rudaw-bold.ttf") format("truetype");
+  font-weight: 600 800;
   font-style: normal;
   font-display: swap;
 }
@@ -78,11 +86,14 @@ textarea {
 
   --font-sans:
     "Schibsted Grotesk Variable", "Segoe UI", system-ui, sans-serif;
-  /* Vazirmatn covers the Sorani letters (ڕ ڵ ێ ۆ ە) Sarchia Makka may lack */
+  /* Rudaw for the Kurdish and Arabic UI; Vazirmatn catches any glyph it
+     lacks. Rudaw has its own Latin letters, so English words inside
+     Kurdish/Arabic text are drawn in Rudaw too. */
   --font-kurdish:
-    "Sarchia Makka", "Vazirmatn Variable", "Schibsted Grotesk Variable",
-    system-ui, sans-serif;
-  --font-arabic: "Vazirmatn Variable", "Schibsted Grotesk Variable", system-ui,
+    "Rudaw", "Vazirmatn Variable", "Schibsted Grotesk Variable", system-ui,
+    sans-serif;
+  --font-arabic:
+    "Rudaw", "Vazirmatn Variable", "Schibsted Grotesk Variable", system-ui,
     sans-serif;
 
   --radius: 0.875rem;
@@ -247,5 +258,34 @@ textarea {
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Receipts: only #print-root (PrintRoot.vue) reaches the paper */
+#print-root {
+  display: none;
+}
+@media print {
+  @page {
+    margin: 0;
+  }
+  html,
+  body {
+    background: #fff !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  body > :not(#print-root) {
+    display: none !important;
+  }
+  #print-root {
+    display: block;
+    padding: 3mm;
+    color: #000;
+    font-family: var(--font-sans);
+    line-height: 1.35;
+  }
+  #print-root .rule {
+    border-top: 1px dashed #000;
   }
 }

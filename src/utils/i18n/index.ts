@@ -31,21 +31,3 @@ export const i18n = createI18n({
   globalInjection: true,
   messages: { en, ku, ar },
 });
-
-/**
- * Picks the column for the current language from a row with per-language
- * columns. English may be stored as `name` (categories) or `name_en`
- * (shop_profile); empty translations fall back to English.
- */
-export const localized = <T extends object>(
-  row: T,
-  field: string,
-  lang: Language = i18n.global.locale.value as Language,
-): string => {
-  const r = row as Record<string, unknown>;
-  for (const key of [`${field}_${lang}`, field, `${field}_en`]) {
-    const v = r[key];
-    if (typeof v === "string" && v.trim()) return v;
-  }
-  return "";
-};

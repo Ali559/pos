@@ -36,8 +36,6 @@ fn unique_violation(e: &sqlx::Error) -> Option<String> {
 #[serde(rename_all = "camelCase")]
 pub struct CategoryInput {
     pub name: String,
-    pub name_ku: Option<String>,
-    pub name_ar: Option<String>,
     pub description: Option<String>,
     pub parent_id: Option<i64>,
     pub icon_key: String,
@@ -101,12 +99,10 @@ pub async fn create_category(ctx: &Ctx, c: CategoryInput) -> Result<i64> {
     .fetch_one(&ctx.pool)
     .await?;
     let id = sqlx::query(
-        "INSERT INTO categories (name, name_ku, name_ar, description, parent_id, icon_key, color, image_media_id, display_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        "INSERT INTO categories (name, description, parent_id, icon_key, color, image_media_id, display_order)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(c.name.trim())
-    .bind(trimmed(&c.name_ku))
-    .bind(trimmed(&c.name_ar))
     .bind(trimmed(&c.description))
     .bind(c.parent_id)
     .bind(c.icon_key.trim())
@@ -132,13 +128,11 @@ pub async fn update_category(ctx: &Ctx, args: UpdateCategoryArgs) -> Result<()> 
     let c = &args.category;
     validate_category(ctx, c, Some(args.id)).await?;
     let done = sqlx::query(
-        "UPDATE categories SET name = $1, name_ku = $2, name_ar = $3, description = $4,
-            parent_id = $5, icon_key = $6, color = $7, image_media_id = $8
-         WHERE id = $9",
+        "UPDATE categories SET name = $1, description = $2,
+            parent_id = $3, icon_key = $4, color = $5, image_media_id = $6
+         WHERE id = $7",
     )
     .bind(c.name.trim())
-    .bind(trimmed(&c.name_ku))
-    .bind(trimmed(&c.name_ar))
     .bind(trimmed(&c.description))
     .bind(c.parent_id)
     .bind(c.icon_key.trim())
@@ -246,8 +240,6 @@ pub async fn delete_category(ctx: &Ctx, args: IdArgs) -> Result<()> {
 #[serde(rename_all = "camelCase")]
 pub struct ProductInput {
     pub name: String,
-    pub name_ku: Option<String>,
-    pub name_ar: Option<String>,
     /// Blank: generated as P-00042 from the id
     pub sku: Option<String>,
     pub category_id: Option<i64>,
@@ -372,14 +364,12 @@ pub async fn create_product(ctx: &Ctx, p: ProductInput) -> Result<i64> {
     // A placeholder SKU keeps the NOT NULL UNIQUE column happy until we know the id
     let sku = trimmed(&p.sku).map(str::to_owned).unwrap_or_else(|| format!("tmp-{}", uuid::Uuid::new_v4()));
     let id = sqlx::query(
-        "INSERT INTO products (sku, name, name_ku, name_ar, category_id, barcode, cost_price,
+        "INSERT INTO products (sku, name, category_id, barcode, cost_price,
             selling_price, min_stock_level, unit, icon_key, is_active, stock_quantity)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
     )
     .bind(&sku)
     .bind(p.name.trim())
-    .bind(trimmed(&p.name_ku))
-    .bind(trimmed(&p.name_ar))
     .bind(p.category_id)
     .bind(codes.first())
     .bind(p.cost_price)
@@ -432,14 +422,12 @@ pub async fn update_product(ctx: &Ctx, args: UpdateProductArgs) -> Result<()> {
     let codes = validate_product(ctx, p, Some(args.id)).await?;
     let mut tx = ctx.pool.begin().await?;
     let mut q = sqlx::query(
-        "UPDATE products SET name = $1, name_ku = $2, name_ar = $3, category_id = $4, barcode = $5,
-            cost_price = $6, selling_price = $7, min_stock_level = $8, unit = $9, icon_key = $10,
-            is_active = $11, sku = COALESCE($12, sku)
-         WHERE id = $13",
+        "UPDATE products SET name = $1, category_id = $2, barcode = $3,
+            cost_price = $4, selling_price = $5, min_stock_level = $6, unit = $7, icon_key = $8,
+            is_active = $9, sku = COALESCE($10, sku)
+         WHERE id = $11",
     )
     .bind(p.name.trim())
-    .bind(trimmed(&p.name_ku))
-    .bind(trimmed(&p.name_ar))
     .bind(p.category_id)
     .bind(codes.first())
     .bind(p.cost_price)
@@ -467,8 +455,6 @@ mod tests {
     fn cat(name: &str, parent: Option<i64>) -> CategoryInput {
         CategoryInput {
             name: name.into(),
-            name_ku: None,
-            name_ar: None,
             description: None,
             parent_id: parent,
             icon_key: "tabler:bottle".into(),
@@ -480,8 +466,6 @@ mod tests {
     fn product(name: &str, barcode: &str) -> ProductInput {
         ProductInput {
             name: name.into(),
-            name_ku: None,
-            name_ar: None,
             sku: None,
             category_id: None,
             barcode: Some(barcode.into()),
@@ -532,7 +516,10 @@ mod tests {
             let a = create_category(&ctx, cat("A", None)).await.unwrap();
             let b = create_category(&ctx, cat("B", None)).await.unwrap();
             move_category(&ctx, MoveArgs { id: b, offset: -1 }).await.unwrap();
-            let order: Vec<(i64,)> = sqlx::query_as("SELECT id FROM categories WHERE parent_id IS NULL ORDER BY display_order")
+            // (setup also created a starter category; look only at these two)
+            let order: Vec<(i64,)> = sqlx::query_as("SELECT id FROM categories WHERE id IN ($1, $2) ORDER BY display_order")
+                .bind(a)
+                .bind(b)
                 .fetch_all(&ctx.pool)
                 .await
                 .unwrap();

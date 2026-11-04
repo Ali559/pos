@@ -8,9 +8,7 @@ export interface Permission {
 
 export interface Role {
   id: number;
-  name_en: string;
-  name_ku: string;
-  name_ar: string | null;
+  name: string;
   description: string | null;
   is_system: number;
   user_count: number;
@@ -22,8 +20,6 @@ export interface Employee {
   full_name: string;
   role_id: number;
   role_name: string;
-  role_name_ku: string;
-  role_name_ar: string | null;
   phone: string | null;
   photo_media_id: number | null;
   hire_date: string | null;
@@ -47,7 +43,7 @@ export const listPermissions = () =>
 
 export const listRoles = () =>
   select<Role>(
-    `SELECT r.id, r.name_en, r.name_ku, r.name_ar, r.description, r.is_system,
+    `SELECT r.id, r.name, r.description, r.is_system,
             (SELECT COUNT(*) FROM users u WHERE u.role_id = r.id) AS user_count
      FROM roles r ORDER BY r.is_system DESC, r.id`,
   );
@@ -64,7 +60,7 @@ export const listRolePermissions = async (roleId: number) =>
 export const listEmployees = () =>
   select<Employee>(
     `SELECT u.id, u.username, u.full_name, u.role_id,
-            r.name_en AS role_name, r.name_ku AS role_name_ku, r.name_ar AS role_name_ar,
+            r.name AS role_name,
             u.phone, u.photo_media_id, u.hire_date, u.wage_amount, u.wage_period,
             u.is_active, u.pin_hash IS NOT NULL AS has_pin, u.last_login
      FROM users u JOIN roles r ON r.id = u.role_id

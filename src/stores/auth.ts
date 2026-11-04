@@ -8,8 +8,6 @@ export interface SessionUser {
   username: string;
   roleId: number;
   roleName: string;
-  roleName_ku: string;
-  roleName_ar: string | null;
 }
 
 export interface ShiftInfo {
@@ -57,14 +55,15 @@ export const useAuth = () => ({
   login: async (username: string, password: string) =>
     apply(await call<AuthStatus>("login", { username, password })),
   loginPin: async (pin: string) => apply(await call<AuthStatus>("login_pin", { pin })),
-  completeSetup: async (shop: unknown, owner: unknown) =>
-    apply(await call<AuthStatus>("complete_setup", { shop, owner })),
+  /** language, shop, owner and starter categories (see auth::SetupArgs) */
+  completeSetup: async (args: { language: string; shop: unknown; owner: unknown; categories: unknown[] }) =>
+    apply(await call<AuthStatus>("complete_setup", args)),
   logout: async () => {
     await call("logout");
     session.value = null;
   },
-  endShift: async () => {
-    await call("end_shift");
+  endShift: async (count: { countedCash: number | null; note: string | null }) => {
+    await call("end_shift", count);
     session.value = null;
   },
 });

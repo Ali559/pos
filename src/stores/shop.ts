@@ -6,7 +6,6 @@ import {
   type ShopProfileWithLogo,
 } from "@/db/shop";
 import { getSetting, setSetting } from "@/db/settings";
-import { localized } from "@/utils/i18n";
 
 // Module-level state shared by every caller (header, register, settings)
 const profile = ref<ShopProfileWithLogo | null>(null);
@@ -33,8 +32,7 @@ export const useShop = () => ({
   loaded,
   load,
   reload,
-  /** Shop name in the current UI language, falling back to English. */
-  name: computed(() => (profile.value ? localized(profile.value, "name") : "")),
+  name: computed(() => profile.value?.name ?? ""),
   currency: computed(() => profile.value?.currency ?? "IQD"),
   async save(next: ShopProfile) {
     await saveShopProfile(next);

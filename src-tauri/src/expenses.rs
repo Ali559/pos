@@ -21,15 +21,14 @@ fn trimmed(v: &Option<String>) -> Option<&str> {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExpenseTypeInput {
-    pub name_en: String,
-    pub name_ku: String,
-    pub name_ar: Option<String>,
+    /// In the shop's language
+    pub name: String,
     pub icon_key: String,
     pub color: Option<String>,
 }
 
 fn validate_type(t: &ExpenseTypeInput) -> Result<()> {
-    if t.name_en.trim().is_empty() || t.name_ku.trim().is_empty() {
+    if t.name.trim().is_empty() {
         return Err(Error::Rule("type_names_required"));
     }
     if !t.icon_key.contains(':') {
@@ -42,18 +41,16 @@ pub async fn create_expense_type(ctx: &Ctx, t: ExpenseTypeInput) -> Result<i64> 
     let actor = auth::require(ctx, "expenses.edit").await?;
     validate_type(&t)?;
     let id = sqlx::query(
-        "INSERT INTO expense_types (name_en, name_ku, name_ar, icon_key, color, display_order)
-         VALUES ($1, $2, $3, $4, $5, (SELECT COALESCE(MAX(display_order), 0) + 1 FROM expense_types))",
+        "INSERT INTO expense_types (name, icon_key, color, display_order)
+         VALUES ($1, $2, $3, (SELECT COALESCE(MAX(display_order), 0) + 1 FROM expense_types))",
     )
-    .bind(t.name_en.trim())
-    .bind(t.name_ku.trim())
-    .bind(trimmed(&t.name_ar))
+    .bind(t.name.trim())
     .bind(t.icon_key.trim())
     .bind(trimmed(&t.color))
     .execute(&ctx.pool)
     .await?
     .last_insert_rowid();
-    audit::log(ctx, Some(actor.user_id), "expense_type.create", "expense_types", Some(id), &serde_json::json!({ "name": t.name_en })).await?;
+    audit::log(ctx, Some(actor.user_id), "expense_type.create", "expense_types", Some(id), &serde_json::json!({ "name": t.name })).await?;
     Ok(id)
 }
 
@@ -68,10 +65,8 @@ pub async fn update_expense_type(ctx: &Ctx, args: UpdateTypeArgs) -> Result<()> 
     let actor = auth::require(ctx, "expenses.edit").await?;
     let t = &args.expense_type;
     validate_type(t)?;
-    sqlx::query("UPDATE expense_types SET name_en = $1, name_ku = $2, name_ar = $3, icon_key = $4, color = $5 WHERE id = $6")
-        .bind(t.name_en.trim())
-        .bind(t.name_ku.trim())
-        .bind(trimmed(&t.name_ar))
+    sqlx::query("UPDATE expense_types SET name = $1, icon_key = $2, color = $3 WHERE id = $4")
+        .bind(t.name.trim())
         .bind(t.icon_key.trim())
         .bind(trimmed(&t.color))
         .bind(args.id)

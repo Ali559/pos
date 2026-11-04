@@ -1,8 +1,8 @@
 # Architecture
 
-A desktop point-of-sale app for small shops. It runs offline on the till machine as a native window (Tauri), with a Vue 3 front end and a local SQLite database. The interface is trilingual: Kurdish Sorani (default, right-to-left), Arabic (right-to-left), and English (left-to-right).
+A desktop point-of-sale app for small shops. It runs offline on the till machine as a native window (Tauri), with a Vue 3 front end and a local SQLite database. The interface comes in Kurdish Sorani (default, right-to-left), Arabic (right-to-left) and English (left-to-right); each shop picks one at setup and keeps it.
 
-> Status: all four phases of `PLAN.md` are in: SQLite data layer, three languages, Rust media pipeline, shop profile, sign-in (password or PIN), dynamic roles enforced in Rust, employees, shifts and schedules, the category tree and product editor with an offline icon library, checkout, stock batches with expiry, alerts, expenses, and analytics with CSV export. Returns/refunds, receipt printing, discounts and the end-of-shift cash count are not built yet (`PLAN.md` → Left for later, `FEATURES.md`). `FEATURES.md` is the wider backlog.
+> Status: phases 1–5 of `PLAN.md` are in: SQLite data layer, one language per shop, Rust media pipeline, shop profile, sign-in (password or PIN), dynamic roles enforced in Rust, employees, shifts and schedules, the category tree and product editor with an offline icon library and barcode lookup, checkout with discounts, manager approval, cash change, returns, receipts and drawer counts, stock batches with expiry, alerts, expenses, and analytics with CSV export. `FEATURES.md` is the wider backlog.
 
 ## Stack
 
@@ -12,7 +12,7 @@ A desktop point-of-sale app for small shops. It runs offline on the till machine
 | UI framework | Vue 3.5, `<script setup>` + TypeScript | Single-page app mounted in `index.html`. |
 | Build | Vite 6 + `bun` | Dev server on fixed port `1420` (Tauri requires it). |
 | Styling | Tailwind CSS v4 (`@tailwindcss/vite`) | Design tokens are CSS variables in `src/index.css`, mapped into Tailwind with `@theme inline`. |
-| Fonts | Schibsted Grotesk, Vazirmatn (`@fontsource-variable`), Sarchia Makka (bundled) | Self-hosted so the till renders correctly offline. |
+| Fonts | Schibsted Grotesk, Vazirmatn (`@fontsource-variable`), Rudaw (bundled, see `src/assets/fonts/FONTS.md`) | Self-hosted so the till renders correctly offline. |
 | Components | shadcn-vue (new-york style) on reka-ui | Copied into `src/components/ui/`; edit them freely, they are owned code. |
 | UI icons | lucide-vue-next | Interface chrome (buttons, nav). |
 | Catalog icons | Tabler via `@iconify-json/tabler` + `@iconify/vue/offline` | Categories and products; drawn offline, never fetched. |
@@ -49,7 +49,9 @@ pos/
 │   ├── components/
 │   │   ├── menus/                Sidebar (nav rail by permission, user menu), Header (shop, user, shift), NotificationBell
 │   │   ├── EditSheet.vue         Side panel used by every create/edit form
-│   │   ├── catalog/              CategoriesTab, ProductSheet (editor), ProductThumb, StockSheet (receive/remove, batches)
+│   │   ├── catalog/              CategoriesTab, ProductSheet (barcode-first editor), QuickAddTab (scan-and-next), ProductThumb, StockSheet
+│   │   ├── sales/                CashDialog, DiscountDialog, ManagerPinDialog, ReturnDialog, EndShiftDialog, PrintRoot (receipt)
+│   │   ├── pickers/              DateInput, TimeInput (replace native date/time inputs)
 │   │   ├── expenses/             ExpensesTab, ExpenseTypesTab
 │   │   ├── reports/RangePicker.vue  Date presets + custom range, shared by Expenses and Analytics
 │   │   ├── icons/                AppIcon (renders "tabler:…" keys), IconPicker (suggest + browse)
@@ -57,11 +59,10 @@ pos/
 │   │   ├── shop/                 ShopForm, LogoField
 │   │   ├── media/                MediaImage (blurhash → WebP), MediaGallery (ordered photos, cover first)
 │   │   ├── providers/LocaleProvider.vue
-│   │   ├── LanguageSwitcher.vue
 │   │   └── ui/                   shadcn-vue primitives
 │   ├── db/                       Read queries only (SQL lives here, never in views)
 │   │   ├── client.ts             select()/selectOne() → Rust `select` command
-│   │   ├── catalog.ts, settings.ts, shop.ts, staff.ts, stock.ts, expenses.ts, notifications.ts
+│   │   ├── catalog.ts, sales.ts (history, sale detail), settings.ts, shop.ts, staff.ts, stock.ts, expenses.ts, notifications.ts
 │   │   └── analytics.ts          Report queries over sale lines (local-time buckets)
 │   ├── stores/
 │   │   ├── auth.ts               Session mirror, can(), login/logout, MAIN_ROUTES, landingPath()
@@ -80,25 +81,28 @@ pos/
 │   ├── data/
 │   │   ├── icon-index.json       Generated: Tabler names, categories, tags (scripts/build-icon-index.mjs)
 │   │   └── iconSynonyms.ts       Kurdish/Arabic/English shop words → icon keywords
-│   └── utils/i18n/               languages table, localized(), locales/{en,ku,ar}.ts
+│   └── utils/i18n/               languages table, locales/{en,ku,ar}.ts
 ├── scripts/build-icon-index.mjs  Regenerates icon-index.json from @tabler/icons metadata
 ├── tests/                        bun tests (icon suggestions)
 └── src-tauri/
-    ├── migrations/               0001_init … 0005_money
+    ├── migrations/               0001_init … 0007_register
     ├── seeds/demo.sql            Sample catalog (IQD), debug builds only
     ├── src/lib.rs                Builder: sql plugin + migrations, read pool, session, commands
     ├── src/commands.rs           The command list → #[tauri::command]s + dispatch() for the bridge
     ├── src/ctx.rs                Ctx { pool, read_pool, session, media_dir }; now()
-    ├── src/auth.rs               Hashing, sessions, require(permission), setup, login, shifts on sign-in
+    ├── src/auth.rs               Hashing, sessions, require(permission), manager override, setup, login, end shift
     ├── src/staff.rs              Roles and employees, anti-escalation rules
     ├── src/catalog.rs            Categories (tree, order, archive) and products (barcodes, photos, initial stock)
-    ├── src/sales.rs              Checkout (prices from the database, stock check, receipt number)
+    ├── src/sales.rs              Checkout (prices from the database, discounts, cash change), void_line
+    ├── src/returns.rs            Returns and refunds against a sale
+    ├── src/lookup.rs             Barcode lookup: catalog, then Open Food Facts
+    ├── src/seeds.rs              Default names per language, demo catalog
     ├── src/stock.rs              Batches, receive/remove stock, soonest-expiry-first consumption
     ├── src/notifications.rs      Alert reconciliation, OS notifications
     ├── src/expenses.rs           Expenses, types, recurring drafts
     ├── src/export.rs             CSV with BOM; Rust opens the save dialog
     ├── src/background.rs         Hourly: recurring drafts + alert refresh
-    ├── src/shifts.rs             Clock in/out, schedules, copy week
+    ├── src/shifts.rs             Clock in/out, cash drawer and shift summary, schedules, copy week
     ├── src/settings.rs           Settings keys and shop profile writes
     ├── src/query.rs              Read-only `select` for the WebView
     ├── src/media.rs              Image pipeline, upload_media
@@ -153,9 +157,9 @@ Errors cross the boundary as `{ code, message, detail? }`. The UI shows `errors.
 
 ## Language and direction
 
-Language is the setting; direction follows from the `languages` table in `src/utils/i18n/index.ts` (`ku`/`ar` → rtl, `en` → ltr). `LocaleProvider` sets the vue-i18n locale, writes `lang`/`dir` on `<html>`, and saves the choice with `set_setting("language")`. That key is the one setting anyone may change, so it works on the login screen. `localStorage` only caches it for the first paint.
+Language is the setting; direction follows from the `languages` table in `src/utils/i18n/index.ts` (`ku`/`ar` → rtl, `en` → ltr). `LocaleProvider` sets the vue-i18n locale, writes `lang`/`dir` on `<html>`, and saves the choice with `set_setting("language")`. The shop picks it on the setup screen and it is locked after that: Rust refuses `language` once an owner exists, because every name in the shop (products, categories, roles, expense types) is stored once, in that language. `localStorage` only caches it for the first paint.
 
-Fonts follow the language: `:lang(ku)` Sarchia Makka with Vazirmatn fallback, `:lang(ar)` Vazirmatn, `:lang(en)` Schibsted Grotesk. Inputs whose content is always one script set their own `lang`/`dir`. `localized(row, "name")` picks `name_<lang>`, then `name`, then `name_en`.
+Fonts follow the language: `:lang(ku)` and `:lang(ar)` Rudaw with Vazirmatn fallback, `:lang(en)` Schibsted Grotesk. Inputs whose content is always one script set their own `lang`/`dir`. Default roles and expense types are renamed into the shop's language at setup (`seeds.rs`).
 
 Chromium (and so WebView2 on Windows) has no Sorani locale data. `src/lib/locale.ts` detects that and uses Arabic-Iraq number rules plus hand-written Kurdish month and weekday names. Digits stay Western everywhere for now.
 
@@ -202,18 +206,23 @@ Seeded roles: **Owner** (system role, implicitly every permission, can't be edit
 ## Catalog and icons
 
 - **Categories** form a two-level tree (`parent_id`; Rust refuses a third level or moving a parent under another). Names are unique per parent, case-insensitive. Every category has an `icon_key`; subcategories may leave `color` empty to use the parent's. Order is `display_order` within siblings, changed with `move_category`. Categories with products or children can't be deleted, only archived (hides them and their subcategories from the register and pickers).
-- **Products** have one required `name` plus optional `name_ku` / `name_ar` (shown via `localized()`), optional `icon_key`, ordered photos in `product_media` (position 0 is the cover), a primary barcode on `products.barcode` and extras in `product_barcodes`. Barcodes are unique across both. A blank SKU becomes `P-00042`. Stock is set once at creation and logged as a `stock_adjustments` row; later changes are a separate permission (`inventory.adjust_stock`). Products not for sale (`is_active = 0`) are hidden from the register and scanner.
+- **Products** have one `name` (in the shop's language), optional `icon_key`, ordered photos in `product_media` (position 0 is the cover), a primary barcode on `products.barcode` and extras in `product_barcodes`. Barcodes are unique across both. A blank SKU becomes `P-00042`. Stock is set once at creation and logged as a `stock_adjustments` row; later changes are a separate permission (`inventory.adjust_stock`). Products not for sale (`is_active = 0`) are hidden from the register and scanner.
+- **Barcode first**: the product form and Quick add start at the barcode. `lookup_barcode` (`lookup.rs`) checks the catalog, then (if `barcode_lookup` is on) Open Food Facts for name, brand, size, category tags and a photo, which goes through the media pipeline. Only the barcode leaves the machine; offline simply returns nothing. `lib/barcodeLookup.ts` guesses a category from the tags with the icon keyword index.
 - **What a product looks like** (`ProductThumb`): cover photo → its icon → its category's icon → initials.
 - **Icons**: icon keys are `"<set>:<name>"` (today only `tabler:`). The drawing data (~2 MB) and the tag index (~450 KB) are lazy chunks loaded in the background at startup; `AppIcon` keeps its box until they arrive. `@iconify/vue/offline` never calls the Iconify API.
 - **Suggestions** (`lib/iconSearch.ts`): the name, in any of the three languages, is tokenized (sizes like `330ml` and the Arabic `ال` dropped, letter variants such as ي/ی and ك/ک folded). Tokens are mapped to English keywords through `iconSynonyms.ts` by prefix, so Kurdish suffixes still match, and icons are scored on name and tag matches. The parent category's icon category breaks ties. Loose prefix-only matches are dropped when there are three or more solid ones. Grow `iconSynonyms.ts` when shops name things it misses; `bun test` checks a set of real names.
 
 ## Money: sales, stock, alerts, expenses, reports
 
-- **Checkout** (`sales.rs`) receives product ids, quantities and the payment method; prices, costs, tax and stock come from the database. It refuses inactive products, fractional quantities of piece/pack/box items, and more than is on hand (naming the product). One transaction writes `sales` (with the cashier's open `shift_id`), `sale_items` (snapshotting name, price and cost), and `payments`. The existing trigger lowers stock and logs the movement. Receipt numbers are `R-000123`. IQD totals are rounded to whole dinars.
+- **Checkout** (`sales.rs`) receives product ids, quantities, discount amounts, the payment method and cash tendered; prices, costs, tax and stock come from the database. The cart discount is spread over the lines in proportion, so `sale_items.subtotal` is always after every discount and tax is charged on that. Discounts need `sales.discount` or a manager's override token; voids (`void_line`) need `sales.void_line` or one and are only audited, since the cart isn't stored. It refuses inactive products, fractional quantities of piece/pack/box items, and more than is on hand (naming the product). One transaction writes `sales` (with the cashier's open `shift_id`), `sale_items` (snapshotting name, price and cost), and `payments`. The existing trigger lowers stock and logs the movement. Receipt numbers are `R-000123`. IQD totals are rounded to whole dinars.
+- **Manager approval** (`auth::authorize_override`): another active user with the permission types their PIN; Rust keeps a single-use token for 5 minutes in the session state (cleared on sign-in/out) and the action passes it. Every attempt is audited; `sales.approved_by` / `returns.approved_by` record who approved.
+- **Returns** (`returns.rs`): per sale line, up to what's left after earlier returns. The refund is the line's charged amount pro rata plus its tax, and the last unit of a line refunds exactly the remainder. Optional restock (a batch with no expiry). The refund is a negative `payments` row tied to the return, and `sales.payment_status` becomes `partially_refunded`/`refunded`.
+- **Cash drawer**: a `cash_drawers` row per shift, opened with `opening_float`. `shift_summary` = float + cash payments − cash refunds of the shift (payments carry `shift_id`); `end_shift` stores the count and difference.
+- **Receipts**: `PrintRoot.vue` renders the sale into `#print-root` (Code 128 from `lib/code128.ts`); print CSS hides everything else and `print_receipt` asks the webview to print (`window.print()` in a browser). Width 58/80 mm and auto-print are settings.
 - **Batches** (`product_batches`): receiving stock adds a batch with optional expiry and cost; product creation records its opening stock as one. Sales and removals take from the soonest-expiring batch first. Stock older than batches is simply untracked for expiry; `products.stock_quantity` stays the count.
 - **Alerts** (`notifications.rs`): `refresh` recomputes every condition from the data — low stock (≤ reorder level), out of stock, batches expiring within `expiry_warn_days` (default 7) or expired, recurring-expense drafts — and reconciles the table: one open row per condition, closed (`resolved_at`) when it stops being true, hidden (`dismissed_at`) if dismissed. It runs after every stock change, at startup and hourly (`background.rs`). New out-of-stock and expired alerts also become OS notifications (`os_notifications` setting), in the UI language. The bell shows only kinds the user can act on.
 - **Expenses**: types with icons; amounts on local dates. A *repeating* expense is a template that produces a draft each week/month after its date; drafts appear as alerts and on the Expenses screen to confirm, edit or skip.
-- **Analytics** (`db/analytics.ts`) works from sale lines, so later product edits never change history. Buckets and the busiest-hours heatmap use the till's local time (`'localtime'`); weeks start Saturday. The compare toggle uses the same-length period just before. Hours worked come from shifts, clipped to the range. Net profit = gross margin − confirmed expenses, shown only without staff/category/payment filters. The filter bar lives in the route query.
+- **Analytics** (`db/analytics.ts`) works from sale lines, so later product edits never change history. Return lines join the same `lines` CTE as negative quantities and amounts on the return's date (no `sale_id`, so they don't count as transactions); the payment split works on payment dates, refunds included. Buckets and the busiest-hours heatmap use the till's local time (`'localtime'`); weeks start Saturday. The compare toggle uses the same-length period just before. Hours worked come from shifts, clipped to the range. Net profit = gross margin − confirmed expenses, shown only without staff/category/payment filters. The filter bar lives in the route query.
 - **Export**: `save_csv` checks `analytics.export`, opens the save dialog in Rust (the WebView never supplies a path), and writes UTF-8 with a BOM so Excel shows Kurdish and Arabic.
 
 ## Developing in a browser: the dev bridge

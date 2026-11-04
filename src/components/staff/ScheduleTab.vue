@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import DateInput from "@/components/pickers/DateInput.vue";
+import TimeInput from "@/components/pickers/TimeInput.vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { ChevronLeft, ChevronRight, CopyPlus, Loader2, Plus, Trash2 } from "lucide-vue-next";
@@ -252,15 +254,15 @@ const remove = async () => {
       <div class="grid gap-4 sm:grid-cols-3">
         <div class="space-y-2">
           <Label for="s-date">{{ $t("schedule.date") }}</Label>
-          <Input id="s-date" v-model="form.date" type="date" required dir="ltr" />
+          <DateInput id="s-date" v-model="form.date" required />
         </div>
         <div class="space-y-2">
           <Label for="s-start">{{ $t("schedule.start") }}</Label>
-          <Input id="s-start" v-model="form.start" type="time" required dir="ltr" />
+          <TimeInput id="s-start" v-model="form.start" />
         </div>
         <div class="space-y-2">
           <Label for="s-end">{{ $t("schedule.end") }}</Label>
-          <Input id="s-end" v-model="form.end" type="time" required dir="ltr" />
+          <TimeInput id="s-end" v-model="form.end" />
         </div>
       </div>
       <p v-if="overnight" class="text-sm text-muted-foreground">{{ $t("schedule.overnight") }}</p>

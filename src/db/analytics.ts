@@ -15,19 +15,23 @@ export interface Filters {
 /** Shared WITH clause: the sale lines that match the filters. */
 const linesCte = (f: Filters) => {
   const params: unknown[] = [toUtc(f.range.from), toUtc(f.range.to)];
-  const where = ["s.sale_date >= $1", "s.sale_date < $2", "s.payment_status = 'completed'"];
+  // Filters shared by sales and returns; the date applies to each one's own day
+  const where: string[] = [];
   if (f.userId) {
     params.push(f.userId);
     where.push(`s.user_id = $${params.length}`);
   }
   if (f.payment) {
     params.push(f.payment);
-    where.push(`EXISTS (SELECT 1 FROM payments pay WHERE pay.sale_id = s.id AND pay.payment_method = $${params.length})`);
+    where.push(`EXISTS (SELECT 1 FROM payments pay WHERE pay.sale_id = s.id AND pay.amount > 0 AND pay.payment_method = $${params.length})`);
   }
   if (f.categoryId) {
     params.push(f.categoryId);
     where.push(`(p.category_id = $${params.length} OR c.parent_id = $${params.length})`);
   }
+  const and = where.map((w) => ` AND ${w}`).join("");
+  // Returns count as negative lines on the day they happened, with no
+  // sale_id so they don't add transactions
   const sql = `WITH lines AS (
     SELECT si.sale_id, si.product_id, si.product_name, si.quantity, si.subtotal,
            si.cost_price * si.quantity AS cost, s.sale_date, s.user_id,
@@ -36,7 +40,18 @@ const linesCte = (f: Filters) => {
     JOIN sales s ON s.id = si.sale_id
     LEFT JOIN products p ON p.id = si.product_id
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE ${where.join(" AND ")}
+    WHERE s.sale_date >= $1 AND s.sale_date < $2 AND s.payment_status <> 'pending'${and}
+    UNION ALL
+    SELECT NULL, si.product_id, si.product_name, -ri.quantity, -ri.subtotal,
+           -si.cost_price * ri.quantity, r.return_date, s.user_id,
+           COALESCE(c.parent_id, c.id)
+    FROM return_items ri
+    JOIN returns r ON r.id = ri.return_id
+    JOIN sale_items si ON si.id = ri.sale_item_id
+    JOIN sales s ON s.id = si.sale_id
+    LEFT JOIN products p ON p.id = si.product_id
+    LEFT JOIN categories c ON c.id = p.category_id
+    WHERE r.return_date >= $1 AND r.return_date < $2${and}
   )`;
   return { sql, params };
 };
@@ -122,8 +137,6 @@ export const heatmap = (f: Filters) => {
 export interface ProductRow {
   product_id: number;
   name: string;
-  name_ku: string | null;
-  name_ar: string | null;
   quantity: number;
   revenue: number;
   margin: number;
@@ -132,7 +145,7 @@ export interface ProductRow {
 export const productSales = (f: Filters) => {
   const { sql, params } = linesCte(f);
   return select<ProductRow>(
-    `${sql} SELECT l.product_id, COALESCE(p.name, MAX(l.product_name)) AS name, p.name_ku, p.name_ar,
+    `${sql} SELECT l.product_id, COALESCE(p.name, MAX(l.product_name)) AS name,
             SUM(l.quantity) AS quantity, SUM(l.subtotal) AS revenue, SUM(l.subtotal - l.cost) AS margin
      FROM lines l LEFT JOIN products p ON p.id = l.product_id
      GROUP BY l.product_id ORDER BY revenue DESC`,
@@ -144,8 +157,8 @@ export const productSales = (f: Filters) => {
 export const slowMovers = (f: Filters) => {
   const { sql, params } = linesCte(f);
   const cat = f.categoryId ? `AND (p.category_id = $${params.length + 1} OR c.parent_id = $${params.length + 1})` : "";
-  return select<{ id: number; name: string; name_ku: string | null; name_ar: string | null; stock: number }>(
-    `${sql} SELECT p.id, p.name, p.name_ku, p.name_ar, p.stock_quantity AS stock
+  return select<{ id: number; name: string; stock: number }>(
+    `${sql} SELECT p.id, p.name, p.stock_quantity AS stock
      FROM products p LEFT JOIN categories c ON c.id = p.category_id
      WHERE p.is_active = 1 AND p.id NOT IN (SELECT product_id FROM lines) ${cat}
      ORDER BY p.stock_quantity DESC LIMIT 20`,
@@ -155,8 +168,8 @@ export const slowMovers = (f: Filters) => {
 
 export const categorySales = (f: Filters) => {
   const { sql, params } = linesCte(f);
-  return select<{ id: number | null; name: string | null; name_ku: string | null; name_ar: string | null; color: string | null; icon_key: string | null; revenue: number; margin: number }>(
-    `${sql} SELECT l.root_category_id AS id, c.name, c.name_ku, c.name_ar, c.color, c.icon_key,
+  return select<{ id: number | null; name: string | null; color: string | null; icon_key: string | null; revenue: number; margin: number }>(
+    `${sql} SELECT l.root_category_id AS id, c.name, c.color, c.icon_key,
             SUM(l.subtotal) AS revenue, SUM(l.subtotal - l.cost) AS margin
      FROM lines l LEFT JOIN categories c ON c.id = l.root_category_id
      GROUP BY l.root_category_id ORDER BY revenue DESC`,
@@ -164,7 +177,8 @@ export const categorySales = (f: Filters) => {
   );
 };
 
-/** Payments are per sale, so a category filter doesn't apply here. */
+/** Payments are per sale, so a category filter doesn't apply here. Refunds
+ *  are negative payments, counted on the day they were paid out. */
 export const paymentSplit = (f: Filters) => {
   const params: unknown[] = [toUtc(f.range.from), toUtc(f.range.to)];
   let user = "";
@@ -173,9 +187,10 @@ export const paymentSplit = (f: Filters) => {
     user = ` AND s.user_id = $3`;
   }
   return select<{ method: string; amount: number; transactions: number }>(
-    `SELECT pay.payment_method AS method, SUM(pay.amount) AS amount, COUNT(DISTINCT s.id) AS transactions
+    `SELECT pay.payment_method AS method, SUM(pay.amount) AS amount,
+            COUNT(DISTINCT CASE WHEN pay.amount > 0 THEN s.id END) AS transactions
      FROM payments pay JOIN sales s ON s.id = pay.sale_id
-     WHERE s.sale_date >= $1 AND s.sale_date < $2 AND s.payment_status = 'completed'${user}
+     WHERE pay.payment_date >= $1 AND pay.payment_date < $2 AND s.payment_status <> 'pending'${user}
      GROUP BY pay.payment_method ORDER BY amount DESC`,
     params,
   );
@@ -221,9 +236,7 @@ export const employeeStats = (f: Filters) => {
 
 export interface ExpenseSum {
   type_id: number;
-  name_en: string;
-  name_ku: string;
-  name_ar: string | null;
+  name: string;
   icon_key: string;
   color: string | null;
   amount: number;
@@ -232,7 +245,7 @@ export interface ExpenseSum {
 /** Confirmed expenses whose date falls in the range (local dates). */
 export const expensesByType = (range: Range) =>
   select<ExpenseSum>(
-    `SELECT t.id AS type_id, t.name_en, t.name_ku, t.name_ar, t.icon_key, t.color, SUM(e.amount) AS amount
+    `SELECT t.id AS type_id, t.name, t.icon_key, t.color, SUM(e.amount) AS amount
      FROM expenses e JOIN expense_types t ON t.id = e.type_id
      WHERE e.status = 'confirmed' AND e.spent_on >= $1 AND e.spent_on < $2
      GROUP BY t.id ORDER BY amount DESC`,

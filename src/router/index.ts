@@ -37,6 +37,12 @@ export const router = createRouter({
           component: () => import("@/views/SalesView.vue"),
         },
         {
+          path: "point-of-sale/history",
+          name: "Sales history",
+          meta: { titleKey: "history.title", permission: "sales.sell" },
+          component: () => import("@/views/SalesHistoryView.vue"),
+        },
+        {
           path: "inventory",
           name: "Inventory",
           meta: { titleKey: "sidebar.inventory", permission: "inventory.view" },

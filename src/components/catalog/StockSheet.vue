@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DateInput from "@/components/pickers/DateInput.vue";
 import { computed, ref, watch } from "vue";
 import { Loader2 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,6 @@ import type { Product } from "@/db/catalog";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
 import { formatDateTime } from "@/lib/locale";
-import { localized } from "@/utils/i18n";
 
 const open = defineModel<boolean>("open", { required: true });
 const props = defineProps<{ product: Product | null }>();
@@ -82,7 +82,7 @@ const save = async () => {
   <EditSheet
     v-model:open="open"
     :title="$t('stock.title')"
-    :description="product ? `${localized(product, 'name')} — ${$t('stock.onHand', { n: product.stock })}` : ''"
+    :description="product ? `${product.name} — ${$t('stock.onHand', { n: product.stock })}` : ''"
     @submit="save"
   >
     <div class="grid grid-cols-2 rounded-lg bg-muted p-1" role="tablist">
@@ -111,7 +111,7 @@ const save = async () => {
             {{ $t("stock.expiry") }}
             <span class="font-normal text-muted-foreground">({{ $t("common.optional") }})</span>
           </Label>
-          <Input id="s-exp" v-model="form.expiry" type="date" :min="today()" dir="ltr" />
+          <DateInput id="s-exp" v-model="form.expiry" :min="today()" clearable :placeholder="$t('stock.noExpiry')" />
         </div>
         <div class="space-y-2">
           <Label for="s-cost">

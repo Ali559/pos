@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DateInput from "@/components/pickers/DateInput.vue";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { KeyRound, Loader2, Pencil, Plus, Search } from "lucide-vue-next";
@@ -26,7 +27,6 @@ import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
 import { formatDateTime } from "@/lib/locale";
 import { useAuth } from "@/stores/auth";
-import { localized } from "@/utils/i18n";
 
 const { t } = useI18n();
 const auth = useAuth();
@@ -170,7 +170,7 @@ const lastLogin = (iso: string | null) => (iso ? formatDateTime(new Date(iso)) :
         <SelectContent>
           <SelectItem value="all">{{ $t("staff.allRoles") }}</SelectItem>
           <SelectItem v-for="r in roles" :key="r.id" :value="String(r.id)">
-            {{ localized(r, "name") }}
+            {{ r.name }}
           </SelectItem>
         </SelectContent>
       </Select>
@@ -206,7 +206,7 @@ const lastLogin = (iso: string | null) => (iso ? formatDateTime(new Date(iso)) :
                 <KeyRound v-if="e.has_pin" :size="12" :aria-label="$t('staff.hasPin')" />
               </div>
             </TableCell>
-            <TableCell>{{ localized(e, "role_name") }}</TableCell>
+            <TableCell>{{ e.role_name }}</TableCell>
             <TableCell class="num" dir="ltr">{{ e.phone ?? "—" }}</TableCell>
             <TableCell class="text-muted-foreground">{{ lastLogin(e.last_login) }}</TableCell>
             <TableCell>
@@ -253,7 +253,7 @@ const lastLogin = (iso: string | null) => (iso ? formatDateTime(new Date(iso)) :
             <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem v-for="r in assignableRoles" :key="r.id" :value="String(r.id)">
-                {{ localized(r, "name") }}
+                {{ r.name }}
               </SelectItem>
             </SelectContent>
           </Select>
@@ -264,7 +264,7 @@ const lastLogin = (iso: string | null) => (iso ? formatDateTime(new Date(iso)) :
         </div>
         <div class="space-y-2">
           <Label for="e-hire">{{ $t("staff.fields.hireDate") }}</Label>
-          <Input id="e-hire" v-model="form.hireDate" type="date" dir="ltr" />
+          <DateInput id="e-hire" v-model="form.hireDate" clearable />
         </div>
         <div class="space-y-2">
           <Label for="e-wage">

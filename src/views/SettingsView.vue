@@ -70,6 +70,24 @@ const saveAlerts = async () => {
   }
 };
 
+// Register: receipts, drawer, barcode lookup
+const register = ref({ receiptWidth: "80", autoPrint: false, openingFloat: 0, barcodeLookup: true });
+const registerSaved = ref(false);
+const registerError = ref("");
+const saveRegister = async () => {
+  registerError.value = "";
+  try {
+    const r = register.value;
+    await setSetting("receipt_width", r.receiptWidth);
+    await setSetting("auto_print", r.autoPrint ? "1" : "0");
+    await setSetting("opening_float", String(Math.max(0, Number(r.openingFloat) || 0)));
+    await setSetting("barcode_lookup", r.barcodeLookup ? "1" : "0");
+    flash(registerSaved);
+  } catch (e) {
+    registerError.value = errorMessage(e);
+  }
+};
+
 // Shop profile
 const shopForm = ref<ShopProfile | null>(null);
 const shopLogo = ref<MediaFile | null>(null);
@@ -118,6 +136,15 @@ onMounted(async () => {
   resetShopForm();
   warnDays.value = Number(await getSetting("expiry_warn_days")) || 7;
   osAlerts.value = (await getSetting("os_notifications")) !== "0";
+  const [width, auto, float, lookup] = await Promise.all(
+    ["receipt_width", "auto_print", "opening_float", "barcode_lookup"].map(getSetting),
+  );
+  register.value = {
+    receiptWidth: width === "58" ? "58" : "80",
+    autoPrint: auto === "1",
+    openingFloat: Number(float) || 0,
+    barcodeLookup: lookup !== "0",
+  };
 });
 </script>
 
@@ -174,6 +201,52 @@ onMounted(async () => {
               </Button>
               <span v-if="taxSaved" class="pb-2.5 text-sm text-success">{{ $t("common.saved") }}</span>
               <span v-if="taxError" role="alert" class="pb-2.5 text-sm text-destructive">{{ taxError }}</span>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card v-if="canSystem">
+          <CardHeader>
+            <CardTitle>{{ $t("settings.register.title") }}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form class="space-y-4" @submit.prevent="saveRegister">
+              <div class="flex flex-wrap gap-6">
+                <div class="space-y-2">
+                  <Label>{{ $t("settings.register.receiptWidth") }}</Label>
+                  <Select v-model="register.receiptWidth" :key="$i18n.locale">
+                    <SelectTrigger class="w-40"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="80">80 mm</SelectItem>
+                      <SelectItem value="58">58 mm</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div class="space-y-2">
+                  <Label for="openingFloat">{{ $t("settings.register.openingFloat") }}</Label>
+                  <Input id="openingFloat" v-model.number="register.openingFloat" type="number" min="0" step="any" dir="ltr" class="w-40" />
+                </div>
+              </div>
+              <p class="-mt-2 text-xs text-muted-foreground">{{ $t("settings.register.openingFloatHint") }}</p>
+              <label class="flex items-center gap-3 text-sm">
+                <input v-model="register.autoPrint" type="checkbox" class="size-4 accent-primary" />
+                <span>
+                  <span class="font-medium">{{ $t("settings.register.autoPrint") }}</span>
+                  <span class="block text-muted-foreground">{{ $t("settings.register.autoPrintHint") }}</span>
+                </span>
+              </label>
+              <label class="flex items-center gap-3 text-sm">
+                <input v-model="register.barcodeLookup" type="checkbox" class="size-4 accent-primary" />
+                <span>
+                  <span class="font-medium">{{ $t("settings.register.barcodeLookup") }}</span>
+                  <span class="block text-muted-foreground">{{ $t("settings.register.barcodeLookupHint") }}</span>
+                </span>
+              </label>
+              <div class="flex items-center gap-3">
+                <Button type="submit">{{ $t("common.save") }}</Button>
+                <span v-if="registerSaved" class="text-sm text-success">{{ $t("common.saved") }}</span>
+                <span v-if="registerError" role="alert" class="text-sm text-destructive">{{ registerError }}</span>
+              </div>
             </form>
           </CardContent>
         </Card>

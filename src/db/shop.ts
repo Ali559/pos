@@ -2,20 +2,18 @@ import { selectOne } from "./client";
 import { call } from "@/lib/ipc";
 import type { MediaFile } from "@/lib/media";
 
+export type ShopType = "mini_market" | "supermarket" | "other";
+
+/** Names are in the shop's one language, chosen at setup. */
 export interface ShopProfile {
-  name_en: string;
-  name_ku: string;
-  name_ar: string | null;
+  name: string;
+  shop_type: ShopType;
   logo_media_id: number | null;
   phone: string | null;
   phone_alt: string | null;
-  address_en: string | null;
-  address_ku: string | null;
-  address_ar: string | null;
+  address: string | null;
   tax_number: string | null;
-  receipt_footer_en: string | null;
-  receipt_footer_ku: string | null;
-  receipt_footer_ar: string | null;
+  receipt_footer: string | null;
   currency: string;
 }
 
@@ -24,16 +22,14 @@ export interface ShopProfileWithLogo extends ShopProfile {
 }
 
 const FIELDS: (keyof ShopProfile)[] = [
-  "name_en", "name_ku", "name_ar", "logo_media_id", "phone", "phone_alt",
-  "address_en", "address_ku", "address_ar", "tax_number",
-  "receipt_footer_en", "receipt_footer_ku", "receipt_footer_ar", "currency",
+  "name", "shop_type", "logo_media_id", "phone", "phone_alt", "address",
+  "tax_number", "receipt_footer", "currency",
 ];
 
 export const emptyShopProfile = (): ShopProfile => ({
-  name_en: "", name_ku: "", name_ar: null, logo_media_id: null,
-  phone: null, phone_alt: null, address_en: null, address_ku: null,
-  address_ar: null, tax_number: null, receipt_footer_en: null,
-  receipt_footer_ku: null, receipt_footer_ar: null, currency: "IQD",
+  name: "", shop_type: "mini_market", logo_media_id: null, phone: null,
+  phone_alt: null, address: null, tax_number: null, receipt_footer: null,
+  currency: "IQD",
 });
 
 export const getShopProfile = async (): Promise<ShopProfileWithLogo | null> => {

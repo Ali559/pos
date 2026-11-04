@@ -56,3 +56,23 @@ export const formatDay = (date: Date, lang: Language = currentLanguage()) => {
     numberingSystem: "latn",
   });
 };
+
+/** "November 2026" in the UI language (Kurdish names when Intl lacks them). */
+export const formatMonthYear = (date: Date, lang: Language = currentLanguage()) => {
+  if (lang === "ku" && !hasCkb) return `${KU_MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+  return date.toLocaleDateString(languages[lang].intl, { month: "long", year: "numeric", numberingSystem: "latn" });
+};
+
+/** "4 November 2026": a full date for display. */
+export const formatDate = (date: Date, lang: Language = currentLanguage()) => {
+  if (lang === "ku" && !hasCkb) return `${date.getDate()}ی ${KU_MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+  return date.toLocaleDateString(languages[lang].intl, { day: "numeric", month: "long", year: "numeric", numberingSystem: "latn" });
+};
+
+/** One- or two-letter weekday headers, Saturday first (0 = Sunday). */
+const SHORT_WEEKDAYS: Record<Language, string[]> = {
+  en: ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"],
+  ku: ["ی", "د", "س", "چ", "پ", "ھ", "ش"],
+  ar: ["ح", "ن", "ث", "ر", "خ", "ج", "س"],
+};
+export const shortWeekday = (day: number, lang: Language = currentLanguage()) => SHORT_WEEKDAYS[lang][day];
