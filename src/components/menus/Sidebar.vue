@@ -1,22 +1,63 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import {
   ChartColumn,
+  Clock,
   LogOut,
   Package,
   ScanBarcode,
   Settings,
+  UsersRound,
 } from "lucide-vue-next";
 import { useRoute, useRouter } from "vue-router";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { MAIN_ROUTES, useAuth } from "@/stores/auth";
+import { localized } from "@/utils/i18n";
 
 const router = useRouter();
 const route = useRoute();
+const auth = useAuth();
 
-const items = [
-  { to: "/main/point-of-sale", icon: ScanBarcode, key: "sidebar.pointOfSale" },
-  { to: "/main/inventory", icon: Package, key: "sidebar.inventory" },
-  { to: "/main/analytics", icon: ChartColumn, key: "sidebar.analytics" },
-  { to: "/main/settings", icon: Settings, key: "sidebar.settings" },
-];
+const meta = {
+  "/main/point-of-sale": { icon: ScanBarcode, key: "sidebar.pointOfSale" },
+  "/main/inventory": { icon: Package, key: "sidebar.inventory" },
+  "/main/analytics": { icon: ChartColumn, key: "sidebar.analytics" },
+  "/main/staff": { icon: UsersRound, key: "sidebar.staff" },
+  "/main/settings": { icon: Settings, key: "sidebar.settings" },
+} as const;
+
+// Only screens this user may open
+const items = computed(() =>
+  MAIN_ROUTES.filter((r) => r.permission === null || auth.can(r.permission)).map(
+    (r) => ({ to: r.path, ...meta[r.path] }),
+  ),
+);
+
+const initials = computed(() =>
+  (auth.user.value?.fullName ?? "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase(),
+);
+
+const logout = async () => {
+  await auth.logout();
+  router.replace("/");
+};
+const endShift = async () => {
+  await auth.endShift();
+  router.replace("/");
+};
 </script>
 
 <template>
@@ -45,22 +86,36 @@ const items = [
       </li>
     </ul>
 
-    <div class="flex flex-col items-center gap-3">
-      <div
-        class="grid size-10 place-items-center rounded-full bg-sidebar-accent text-sm font-semibold text-sidebar-accent-foreground"
-        :title="`${$t('sidebar.userInfo.user')}: Admin`"
-      >
-        AD
-      </div>
-      <button
-        type="button"
-        @click="router.push('/')"
-        :title="$t('sidebar.logout')"
-        :aria-label="$t('sidebar.logout')"
-        class="grid size-10 place-items-center rounded-lg transition-colors hover:bg-destructive/20 hover:text-destructive focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
-      >
-        <LogOut :size="19" class="rtl:rotate-180" />
-      </button>
-    </div>
+    <DropdownMenu v-if="auth.user.value">
+      <DropdownMenuTrigger as-child>
+        <button
+          type="button"
+          class="grid size-11 place-items-center rounded-full bg-sidebar-accent text-sm font-semibold text-sidebar-accent-foreground ring-sidebar-ring outline-none hover:ring-2 focus-visible:ring-2"
+          :aria-label="auth.user.value.fullName"
+        >
+          {{ initials }}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="right" align="end" class="w-56">
+        <DropdownMenuLabel class="font-normal">
+          <div class="font-semibold">{{ auth.user.value.fullName }}</div>
+          <div class="text-xs text-muted-foreground">
+            {{ localized(auth.user.value, "roleName") }}
+          </div>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem class="cursor-pointer gap-2" @click="logout">
+          <LogOut class="size-4 rtl:rotate-180" />
+          {{ $t("sidebar.switchUser") }}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          class="cursor-pointer gap-2 text-destructive focus:text-destructive"
+          @click="endShift"
+        >
+          <Clock class="size-4" />
+          {{ $t("sidebar.endShift") }}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   </nav>
 </template>

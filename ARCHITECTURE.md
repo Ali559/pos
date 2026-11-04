@@ -2,13 +2,13 @@
 
 A desktop point-of-sale app for small shops. It runs offline on the till machine as a native window (Tauri), with a Vue 3 front end and a local SQLite database. The interface is trilingual: Kurdish Sorani (default, right-to-left), Arabic (right-to-left), and English (left-to-right).
 
-> Status: Phase 1 of `PLAN.md` is in. The register and inventory read from SQLite, the shop profile and settings are stored there, images go through the Rust media pipeline, and language/direction are persisted. Login, checkout, and product editing are still stubs, and analytics still shows sample numbers. `FEATURES.md` is the wider backlog.
+> Status: Phases 1 and 2 of `PLAN.md` are in: SQLite data layer, three languages, Rust media pipeline, shop profile, real sign-in (password or PIN), dynamic roles and permissions enforced in Rust, employees, shifts and schedules. Checkout and product editing are still stubs, and analytics still shows sample numbers. `FEATURES.md` is the wider backlog.
 
 ## Stack
 
 | Layer | Choice | Notes |
 | --- | --- | --- |
-| Desktop shell | Tauri 2 (Rust) | `src-tauri/`. Window, SQL plugin, media pipeline, asset protocol for stored images. |
+| Desktop shell | Tauri 2 (Rust) | `src-tauri/`. All writes, auth and permission checks, media pipeline. |
 | UI framework | Vue 3.5, `<script setup>` + TypeScript | Single-page app mounted in `index.html`. |
 | Build | Vite 6 + `bun` | Dev server on fixed port `1420` (Tauri requires it). |
 | Styling | Tailwind CSS v4 (`@tailwindcss/vite`) | Design tokens are CSS variables in `src/index.css`, mapped into Tailwind with `@theme inline`. |
@@ -18,7 +18,8 @@ A desktop point-of-sale app for small shops. It runs offline on the till machine
 | Charts | Chart.js 4 | Wrapped by `src/components/data/Chart.vue`. |
 | Routing | vue-router 5, memory history | No URLs exposed; navigation is purely in-app. |
 | i18n | vue-i18n 11 (composition mode) | One file per language in `src/utils/i18n/locales/`. |
-| Persistence | `tauri-plugin-sql` (SQLite via sqlx) | Versioned migrations in `src-tauri/migrations/`. |
+| Database | SQLite via sqlx, owned by `tauri-plugin-sql` | Plugin used from Rust only (migrations + pool); the WebView has no plugin access. |
+| Auth | `argon2` hashes for passwords and PINs | Session lives in Rust memory. |
 | Images | `image` (decode/orient/resize), `webp` (libwebp, lossy q80), `blurhash` | Rust only. |
 
 `flowbite` and `@tanstack/vue-table` are installed but unused; candidates for removal.
@@ -27,174 +28,175 @@ A desktop point-of-sale app for small shops. It runs offline on the till machine
 
 ```
 pos/
-├── index.html                    Vite entry; loads src/main.ts
+├── index.html
 ├── db.sql                        Legacy schema dump; migrations are the source of truth
 ├── src/
 │   ├── main.ts                   Applies theme, installs router + i18n, mounts
 │   ├── App.vue                   Root: LocaleProvider → <router-view>
 │   ├── index.css                 Tailwind, design tokens, fonts per language
-│   ├── router/index.ts           Routes + first-run guard (no shop profile → /setup)
+│   ├── router/index.ts           Routes, meta.permission, first-run + sign-in guards
 │   ├── layouts/MainLayout.vue    Nav rail + top bar + scrolling content
 │   ├── views/
-│   │   ├── SetupView.vue         First run: shop name, logo, currency
-│   │   ├── LoginView.vue
-│   │   ├── SalesView.vue         The register (scan, cart, charge)
+│   │   ├── SetupView.vue         First run: shop details + owner account
+│   │   ├── LoginView.vue         Password or PIN (on-screen keypad)
+│   │   ├── SalesView.vue         The register
 │   │   ├── InventoryView.vue
 │   │   ├── AnalyticsView.vue     (sample data until Phase 4)
-│   │   └── SettingsView.vue      General (theme, tax), Shop, Roles, Users
+│   │   ├── StaffView.vue         Employees, Schedule, Roles tabs
+│   │   └── SettingsView.vue      General (theme, tax, sample data), Shop
 │   ├── components/
-│   │   ├── menus/                Sidebar.vue (nav rail), Header.vue (shop logo + name, title, clock, language)
-│   │   ├── providers/LocaleProvider.vue  Language state; direction derived from it
-│   │   ├── LanguageSwitcher.vue  Lists each language in its own script
-│   │   ├── shop/                 ShopForm.vue, LogoField.vue (shared by setup and settings)
+│   │   ├── menus/                Sidebar.vue (nav rail filtered by permission, user menu), Header.vue (shop, user, shift)
+│   │   ├── staff/                EmployeesTab, RolesTab, ScheduleTab, EditSheet (side panel for forms)
+│   │   ├── shop/                 ShopForm, LogoField
 │   │   ├── media/MediaImage.vue  Blurhash placeholder → fades in the stored WebP
-│   │   ├── data/Chart.vue        Thin Chart.js wrapper
+│   │   ├── providers/LocaleProvider.vue
+│   │   ├── LanguageSwitcher.vue
 │   │   └── ui/                   shadcn-vue primitives
-│   ├── db/                       All SQL lives here; views never write SQL
-│   │   ├── client.ts             getDb(): plugin-sql in the app, sql.js in a plain browser (dev)
-│   │   ├── browser.ts            Dev-only in-memory SQLite running the real migrations + demo seed
-│   │   ├── catalog.ts            Categories, products, barcode lookup, stock state
-│   │   ├── settings.ts           Key/value settings
-│   │   └── shop.ts               Shop profile (single row) with its logo
-│   ├── stores/shop.ts            Shared shop profile, currency, tax rate
-│   ├── hooks/                    useTimeManager (clock), useTheme (light/dark/system)
+│   ├── db/                       Read queries only (SQL lives here, never in views)
+│   │   ├── client.ts             select()/selectOne() → Rust `select` command
+│   │   ├── catalog.ts, settings.ts, shop.ts, staff.ts
+│   ├── stores/
+│   │   ├── auth.ts               Session mirror, can(), login/logout, MAIN_ROUTES, landingPath()
+│   │   └── shop.ts               Shop profile, currency, tax rate
+│   ├── hooks/                    useTimeManager, useTheme, useShiftStatus
 │   ├── lib/
-│   │   ├── format.ts             formatCurrency(): shop currency + UI language
-│   │   ├── locale.ts             Intl locale per language, Kurdish fallbacks
+│   │   ├── ipc.ts                call(command, args): Tauri invoke, or the dev bridge in a browser
+│   │   ├── errors.ts             errorMessage(): translates Rust error codes
+│   │   ├── format.ts, locale.ts  Money, dates, times; Kurdish fallbacks
 │   │   ├── media.ts              uploadMedia(), mediaUrl()
-│   │   ├── categoryColor.ts      Tile tint/ink mixed from a category's stored color
-│   │   └── utils.ts              `cn()` class merger
-│   └── utils/
-│       ├── dateUtils.ts
-│       └── i18n/                 index.ts (languages table, localized()), locales/{en,ku,ar}.ts
+│   │   └── categoryColor.ts, utils.ts
+│   └── utils/i18n/               languages table, localized(), locales/{en,ku,ar}.ts
 └── src-tauri/
-    ├── migrations/               0001_init.sql, 0002_shop_media_i18n.sql, …
-    ├── seeds/demo.sql            Sample catalog (IQD), dev only
-    ├── src/lib.rs                Builder: sql plugin + migrations, commands
-    ├── src/db.rs                 DB_URL, migration list, shared pool access, seed command
-    ├── src/media.rs              upload_media / get_media_dir, image processing + tests
-    ├── src/error.rs              Command error type (serialized as a message)
+    ├── migrations/               0001_init, 0002_shop_media_i18n, 0003_people
+    ├── seeds/demo.sql            Sample catalog (IQD), debug builds only
+    ├── src/lib.rs                Builder: sql plugin + migrations, read pool, session, commands
+    ├── src/commands.rs           The command list → #[tauri::command]s + dispatch() for the bridge
+    ├── src/ctx.rs                Ctx { pool, read_pool, session, media_dir }; now()
+    ├── src/auth.rs               Hashing, sessions, require(permission), setup, login, shifts on sign-in
+    ├── src/staff.rs              Roles and employees, anti-escalation rules
+    ├── src/shifts.rs             Clock in/out, schedules, copy week
+    ├── src/settings.rs           Settings keys and shop profile writes
+    ├── src/query.rs              Read-only `select` for the WebView
+    ├── src/media.rs              Image pipeline, upload_media
+    ├── src/audit.rs              audit_log writes
+    ├── src/bridge.rs             Dev-only HTTP bridge (debug builds)
+    ├── src/db.rs, src/error.rs
     ├── tauri.conf.json           Window, DB preload, asset protocol scope
-    └── capabilities/default.json core, opener, sql (incl. execute)
+    └── capabilities/default.json core + opener only (no SQL)
 ```
 
 ## Runtime flow
 
 ```
 Tauri process (Rust)
-  ├── sql plugin: preloads sqlite:pos.db and runs migrations before the window loads
+  ├── sql plugin: opens pos.db and runs migrations before the window loads
+  ├── setup: opens a second, read-only pool; starts the dev bridge (debug)
   └── WebView loads Vite build (dev: http://localhost:1420)
-        └── main.ts → App.vue
-              └── LocaleProvider  ← language (settings table), direction derived
-                    └── <router-view>   guard: shop profile missing → /setup
-                          ├── "/setup"  SetupView
-                          ├── "/"       LoginView
-                          └── "/main"   MainLayout (rail + header)
-                                          ├── point-of-sale → SalesView
-                                          ├── inventory     → InventoryView
-                                          ├── analytics     → AnalyticsView
-                                          └── settings      → SettingsView
+        └── LocaleProvider  ← language from settings, direction derived
+              └── <router-view>  guards: setup → sign-in → permission
+                    ├── /setup   SetupView     (no shop or no users yet)
+                    ├── /        LoginView
+                    └── /main    MainLayout
+                                  ├── point-of-sale  sales.sell
+                                  ├── inventory      inventory.view
+                                  ├── analytics      analytics.view
+                                  ├── staff          staff.view
+                                  └── settings       (sections gated individually)
 ```
 
-### Routing
+## Security model
 
-`createMemoryHistory()` is used because the app is a desktop window. All signed-in screens are children of `/main` so they share `MainLayout`; each carries `meta.titleKey` for the header title. A global `beforeEach` loads the shop store and sends a fresh install to `/setup` until a shop profile exists. Login still just pushes to the register (Phase 2).
+The WebView is treated as untrusted: anything it can ask for, Rust checks.
 
-### Language and direction
+- **No SQL from the WebView.** The capability file grants only `core` and `opener`. `tauri-plugin-sql`'s own `select` would run any statement (writes included), so the WebView never gets it.
+- **Reads** go through the `select` command (`query.rs`), which runs on a second pool opened with SQLite's read-only flag. Any write fails inside SQLite ("attempt to write a readonly database"), however the SQL is disguised. A test covers `WITH … DELETE`.
+- **Writes** are specific commands (`commands.rs`). Each starts with `auth::require(ctx, "<permission>")`, which re-reads the user's role and permissions from the database every time. Role edits apply immediately, and a deactivated user is signed out on their next action.
+- **Escalation rules** (`staff.rs`): a non-owner can't grant a permission they don't hold, either in a role or by assigning a role; can't edit someone whose role outranks theirs; only owners hand out the Owner role. The last active owner can't be demoted or deactivated, and nobody can deactivate themselves.
+- **Secrets**: passwords and PINs are argon2 hashes. A PIN alone signs someone in, so PINs are unique (checked against every other hash). Read queries never select hash columns.
+- **Audit**: sign-ins, sign-outs, shifts, role, employee, schedule, settings and shop changes are written to `audit_log`.
+- The UI mirrors permissions (`useAuth().can()`, `meta.permission`, hidden nav items), but that is convenience only.
 
-Language is the setting; direction follows from it via the `languages` table in `src/utils/i18n/index.ts` (`ku` → rtl, `ar` → rtl, `en` → ltr). `LocaleProvider` sets the vue-i18n locale, writes `lang`/`dir` on `<html>`, and persists the choice to the `settings` table (`language`, default `ku`). `localStorage` is only a cache so the first paint is already in the right language; the database value wins once loaded.
+Errors cross the boundary as `{ code, message, detail? }`. The UI shows `errors.<code>` from the locale files (`lib/errors.ts`); `forbidden` names the missing permission.
 
-Fonts follow the language, not the direction: `:lang(ku)` uses Sarchia Makka with Vazirmatn as fallback for Sorani letters, `:lang(ar)` uses Vazirmatn, `:lang(en)` uses Schibsted Grotesk. Inputs whose content is always one script (e.g. "shop name in Arabic") set their own `lang`/`dir`.
+## Sign-in, sessions and shifts
 
-Rows with per-language columns are read with `localized(row, "name")`, which tries `name_<lang>`, then `name`, then `name_en`, and skips empty values.
+- First run (`needsSetup`: no users, or no shop profile): `complete_setup` saves the shop, creates the Owner and signs them in. It is refused once any user exists. A shop saved by an older version is prefilled.
+- `login` (username + password; usernames are case-insensitive) or `login_pin`. One session per app instance.
+- Signing in starts the user's shift, or resumes their open one. It links the schedule that covers now or starts within the hour.
+- *Switch user* (`logout`) keeps the shift open so cashiers can swap at the till. *End shift* (`end_shift`) clocks out, then signs out.
+- The top bar shows the user and "Shift ends 18:00" (amber in the last 15 minutes), or time on shift when unscheduled.
+- Shift and schedule times are RFC 3339 UTC strings written by Rust, so they compare as text. The schedule grid works in local time (weeks start Saturday) and converts at the edge. An end time before the start means the shift runs past midnight.
 
-Chromium (and therefore WebView2 on Windows) has no Sorani locale data, so `Intl` silently falls back to English for `ckb`. `src/lib/locale.ts` detects that once and substitutes Arabic-Iraq number rules (same `د.ع` dinar sign) and hand-written Kurdish month and weekday names. Digits stay Western in every language for now.
+## Language and direction
 
-Layout code uses logical utilities (`ms-*`, `pe-*`, `start-0`, `text-start`, `border-s`) so it mirrors automatically; `rtl:` variants only for things that must flip, like directional icons. Wrap data that may be in another script (product names) in `<bdi>`.
+Language is the setting; direction follows from the `languages` table in `src/utils/i18n/index.ts` (`ku`/`ar` → rtl, `en` → ltr). `LocaleProvider` sets the vue-i18n locale, writes `lang`/`dir` on `<html>`, and saves the choice with `set_setting("language")`. That key is the one setting anyone may change, so it works on the login screen. `localStorage` only caches it for the first paint.
 
-### Styling and theming
+Fonts follow the language: `:lang(ku)` Sarchia Makka with Vazirmatn fallback, `:lang(ar)` Vazirmatn, `:lang(en)` Schibsted Grotesk. Inputs whose content is always one script set their own `lang`/`dir`. `localized(row, "name")` picks `name_<lang>`, then `name`, then `name_en`.
 
-All colors, radii, and fonts are CSS custom properties on `:root` (light) and `.dark` (dark) in `src/index.css`. The `@theme inline` block exposes them to Tailwind. shadcn components consume only these tokens.
+Chromium (and so WebView2 on Windows) has no Sorani locale data. `src/lib/locale.ts` detects that and uses Arabic-Iraq number rules plus hand-written Kurdish month and weekday names. Digits stay Western everywhere for now.
+
+vue-i18n splits message keys on dots, so permission labels are nested (`permissions.sales.refund` → `permissions: { sales: { refund } }`).
+
+Layout uses logical utilities (`ms-*`, `start-0`, `text-start`, `border-s`) so it mirrors automatically. Side panels open from the reading end. Wrap data that may be in another script in `<bdi>`.
+
+## Styling and theming
+
+Colors, radii and fonts are CSS custom properties on `:root` (light) and `.dark`, exposed to Tailwind via `@theme inline`.
 
 | Token | Light | Role |
 | --- | --- | --- |
 | `background` | `#F3F4F0` | till-paper app background |
 | `card` | `#FFFFFF` | panels, the receipt |
 | `foreground` | `#17201C` | ink |
-| `primary` / `brand` | `#1E5B43` | pine; `brand` stays deep in dark mode for the login panel |
-| `sun` | `#F4B728` | reserved for the Charge action |
+| `primary` / `brand` | `#1E5B43` | pine; `brand` stays deep in dark mode |
+| `sun` | `#F4B728` | the Charge action and "today" highlights |
 | `destructive` | `#C8432B` | brick |
 
-Category colors come from the database (`categories.color`, one hex). `categoryTint()` / `categoryInk()` mix it with `--card` / `--foreground` using `color-mix`, so the same stored color works in light and dark mode.
+Category colors come from `categories.color` and are mixed with theme tokens by `categoryColor.ts`. Radii follow hierarchy (controls `rounded-md`, panels `rounded-xl`). `.num` gives lining figures and deliberately avoids tabular ones: Schibsted's tabular set widens `.` and `:`.
 
-Radii follow hierarchy: controls `rounded-md`, panels `rounded-xl`. Chart.js can't read Tailwind classes, so `AnalyticsView` resolves token values with `getComputedStyle`. Dark mode is class-based; `useTheme()` persists light/dark/system and toggles `.dark` on `<html>`.
+## Data
 
-Mark numbers with `.num` (lining figures). It deliberately avoids tabular figures: Schibsted's tabular set widens `.` and `:`.
+### Migrations
 
-## Data layer
-
-### Database and migrations
-
-The database is `sqlite:pos.db` in the app config directory (`~/Library/Application Support/com.macbookshop.pos/` on macOS). `tauri.conf.json` preloads it, so the plugin opens it and runs pending migrations at startup, before any screen queries it. Migrations are plain SQL files in `src-tauri/migrations/`, listed in `db::migrations()`; sqlx records applied versions in `_sqlx_migrations`. Never edit a shipped migration; add a new one.
+`sqlite:pos.db` lives in the app config directory (`~/Library/Application Support/com.macbookshop.pos/` on macOS). `tauri.conf.json` preloads it, so pending migrations run at startup. Migrations are SQL files listed in `db::migrations()`; never edit a shipped one, add a new one. `0003_people` rebuilds `users` (role text → `role_id`, adds `pin_hash` and employee fields) and replaces `user_permissions` with `permissions` / `roles` / `role_permissions`.
 
 ```
-categories ─┐ (name, name_ku, name_ar, color)
-            ├─< products >─< product_barcodes
-suppliers ──┴─< product_suppliers
-products ──< stock_adjustments >── users
-customers ──< sales >── users
-sales ──< sale_items >── products
-sales ──< payments            (split payments)
-sales ──< returns ──< return_items >── sale_items
-users ──< user_permissions
-users ──< cash_drawers        (shift open/close)
-users ──< held_sales          (parked carts as JSON)
-shop_profile (single row) ──> media_files (logo)
-settings (key/value: language, tax_rate, …)   audit_log (JSON before/after)
+permissions ──< role_permissions >── roles ──< users
+users ──< shifts >── shift_schedules (user's planned rota)
+categories ──< products >─< product_barcodes;  suppliers ──< product_suppliers
+customers ──< sales >── users;  sales ──< sale_items, payments, returns
+users ──< stock_adjustments, cash_drawers, held_sales
+shop_profile (single row) ──> media_files;  settings (key/value);  audit_log
 ```
 
-Triggers keep derived data in sync: `after_sale_item_insert` decrements stock and logs a `sale` adjustment; `update_customer_purchases` totals customer spend; timestamp triggers bump `updated_at`. `sale_items` snapshots name and prices so receipts survive product edits.
-
-### Who talks to the database
-
-- **Front end** (`src/db/*`): reads and simple writes through `@tauri-apps/plugin-sql`, with typed functions per area. Views import these, never `getDb()` directly.
-- **Rust** (`db::pool(app)`): borrows the same sqlx pool the plugin owns (`DbInstances`), for operations that must not be done in the WebView. Today that is media uploads; Phase 2 adds auth and permission checks here.
-
-### Browser dev fallback
-
-`bun run dev` in a normal browser has no Tauri. `getDb()` detects that (`isTauri()`) and, in dev builds only, loads `src/db/browser.ts`: sql.js in memory, running every file in `src-tauri/migrations/` plus `seeds/demo.sql`. Nothing persists across reloads, image upload is disabled, and the shop setup screen appears on each load. It exists so screens can be built and checked without the desktop shell. sql.js is stripped from production builds.
+Seeded roles: **Owner** (system role, implicitly every permission, can't be edited or deleted), **Manager** (everything except `roles.manage`, `settings.system`, `staff.edit`) and **Cashier** (`sales.sell`, `sales.reprint`, `inventory.view`).
 
 ### Media pipeline
 
-`upload_media` (Rust) takes the raw file bytes as the IPC body (header `x-file-name`):
+`upload_media` takes raw bytes (header `x-file-name`). It requires a signed-in user, except during first-run setup. Steps: reject empty files and files over 25 MB, dedupe by SHA-256, decode, apply EXIF orientation, cap the longest side at 1600 px, encode lossy WebP q80, compute a 4×3 blurhash, write `<app_data_dir>/media/<uuid>.webp`, insert `media_files`. `<MediaImage>` paints the blurhash, then fades in the file via the asset protocol.
 
-1. Reject empty files and anything over 25 MB; hash the bytes (SHA-256). An identical earlier upload is returned as-is.
-2. Decode (JPEG, PNG, WebP, GIF, BMP), apply EXIF orientation, resize so the longest side is at most 1600 px.
-3. Encode lossy WebP at quality 80 with libwebp.
-4. Blurhash (4×3 components) from a 32 px thumbnail.
-5. Write `<app_data_dir>/media/<uuid>.webp`, insert a `media_files` row, return it.
+## Developing in a browser: the dev bridge
 
-The front end shows images with `<MediaImage>`: it paints the blurhash to a 32×32 canvas immediately and fades in the file, loaded via the asset protocol (`convertFileSrc`, scope `$APPDATA/media/**`).
+`bun run tauri dev` also starts `bridge.rs` on `127.0.0.1:1430` (debug builds only; not compiled into release). Vite proxies `/__bridge/*` to it. A normal browser tab on `http://localhost:1420` then calls the same Rust commands on the same database and session as the app window (`lib/ipc.ts` picks the route automatically). The bridge only answers requests with an `x-pos-bridge: 1` header from that origin. Plain GETs of `/media/*` are allowed for `<img>` tags. This is how the UI is checked end to end without driving the native window.
 
 ## Conventions
 
-- One screen per file in `views/`; extract a component when it is reused (e.g. `ShopForm`) or the view passes ~300 lines.
-- Every user-visible string goes through `$t()`, with keys added to `en`, `ku` and `ar` together. The three locale files must have identical structure.
-- Money always goes through `formatCurrency()`; dates through `src/lib/locale.ts`.
-- Use design tokens, never raw palette classes or hex values (stored category colors are the exception, via `categoryColor.ts`).
-- Use logical spacing/position utilities for anything that should mirror in RTL.
-- Anything trusted (hashing, permissions, file writes, image processing) is a Rust command.
+- One screen per file in `views/`; extract a component when it is reused or the view passes ~300 lines.
+- Every user-visible string goes through `$t()`, added to `en`, `ku` and `ar` together; the three files keep identical structure.
+- New write → a function in the right Rust module that starts with `auth::require`, an entry in `commands!`, a line in `generate_handler!` (a test fails if you forget), and a Rust test.
+- New read → a function in `src/db/*`. Never select password or PIN hashes.
+- Money through `formatCurrency()`; dates and times through `src/lib/locale.ts`.
+- Design tokens only; logical spacing for anything that mirrors.
 - Path alias `@/` → `src/`.
 
 ## Commands
 
 ```bash
-bun install          # install JS deps
-bun run tauri dev    # run the desktop app with hot reload (needs port 1420 free)
-bun run dev          # web UI only, in a browser at :1420, on the in-memory dev DB
-bun run build        # type-check (vue-tsc) and build the web bundle
-cd src-tauri && cargo test   # media pipeline + migration tests
-bun run tauri build  # produce a native installer
+bun install                  # install JS deps
+bun run tauri dev            # desktop app + dev bridge (needs ports 1420 and 1430 free)
+bun run build                # type-check (vue-tsc) and build the web bundle
+cd src-tauri && cargo test   # auth, RBAC, shifts, settings, read-only select, media, migrations
+bun run tauri build          # native installer
 ```
 
-In a debug desktop build, Settings → General → *Load sample data* fills an empty catalog from `seeds/demo.sql`.
+With the app running, open http://localhost:1420 in a browser to use the UI there. In a debug build, Settings → General → *Load sample data* fills an empty catalog.

@@ -105,7 +105,22 @@ CREATE TABLE shop_profile (
 
 ---
 
-## 2. People 🔜
+## 2. People ✅ (2.1–2.3)
+
+Done 2026-11-04; see ARCHITECTURE.md → Security model, Sign-in, sessions and shifts.
+
+**How it differs from the sketch below**
+- Staff has its own screen (Employees / Schedule / Roles) instead of Settings tabs.
+- The WebView has no SQL access at all: reads go through a read-only Rust `select`, writes through permission-checked commands.
+- Non-owners can't grant permissions they lack or edit someone who outranks them (not in the original sketch; needed to make `staff.edit` / `roles.manage` safe to hand out).
+- Weeks in the schedule start on Saturday.
+
+**Deferred, waiting on checkout (no sales exist yet)**
+- ⬜ 2.4 Employee performance (planned together with 4.3).
+- ⬜ Manager PIN override: nothing a cashier is blocked from at the till yet.
+- ⬜ Cash count when a shift closes (`cash_drawers` over/short).
+- ⬜ Employee photo upload (column and media pipeline exist; no UI yet).
+- ⬜ Sign-in attempt throttling.
 
 ### 2.1 RBAC, fully dynamic
 Replace the `users.role` text column and `user_permissions` with real roles and permissions.

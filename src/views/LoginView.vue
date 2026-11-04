@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ReceiptText } from "lucide-vue-next";
+import { Delete, Loader2, ReceiptText } from "lucide-vue-next";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,8 @@ import MediaImage from "@/components/media/MediaImage.vue";
 import { useTimeManager } from "@/hooks/useTimeManager";
 import { formatCurrency } from "@/lib/format";
 import { useShop } from "@/stores/shop";
+import { landingPath, useAuth } from "@/stores/auth";
+import { errorMessage } from "@/lib/errors";
 
 const router = useRouter();
 const username = ref("");
@@ -27,9 +29,43 @@ const sample = [
 ];
 const sampleTotal = sample.reduce((n, l) => n + l.price, 0);
 
-const handleLogin = () => {
-  // Add your login logic here
-  router.push("/main/point-of-sale");
+const auth = useAuth();
+const mode = ref<"password" | "pin">("password");
+const pin = ref("");
+const pinInput = ref<HTMLInputElement | null>(null);
+const busy = ref(false);
+const error = ref("");
+
+const run = async (attempt: () => Promise<unknown>) => {
+  busy.value = true;
+  error.value = "";
+  try {
+    await attempt();
+    router.replace(landingPath());
+  } catch (e) {
+    error.value = errorMessage(e);
+    password.value = "";
+    pin.value = "";
+  } finally {
+    busy.value = false;
+  }
+};
+
+const handleLogin = () => run(() => auth.login(username.value, password.value));
+const handlePin = () => {
+  if (pin.value.length >= 4) run(() => auth.loginPin(pin.value));
+};
+
+const pressKey = (key: string) => {
+  error.value = "";
+  if (key === "back") pin.value = pin.value.slice(0, -1);
+  else if (pin.value.length < 6) pin.value += key;
+};
+
+const switchMode = (m: "password" | "pin") => {
+  mode.value = m;
+  error.value = "";
+  if (m === "pin") nextTick(() => pinInput.value?.focus());
 };
 </script>
 
@@ -92,14 +128,34 @@ const handleLogin = () => {
         </h1>
         <p class="mt-2 text-muted-foreground">{{ $t("login.footer") }}</p>
 
-        <form class="mt-8 space-y-5" @submit.prevent="handleLogin">
+        <div class="mt-8 grid grid-cols-2 rounded-lg bg-muted p-1" role="tablist">
+          <button
+            v-for="m in ['password', 'pin'] as const"
+            :key="m"
+            type="button"
+            role="tab"
+            :aria-selected="mode === m"
+            class="h-9 rounded-md text-sm font-medium text-muted-foreground transition-colors aria-selected:bg-card aria-selected:text-foreground aria-selected:shadow-sm"
+            @click="switchMode(m)"
+          >
+            {{ $t(`login.mode.${m}`) }}
+          </button>
+        </div>
+
+        <form
+          v-if="mode === 'password'"
+          class="mt-6 space-y-5"
+          @submit.prevent="handleLogin"
+        >
           <div class="space-y-2">
             <Label for="username">{{ $t("login.username") }}</Label>
             <Input
               id="username"
               v-model="username"
               type="text"
+              dir="ltr"
               autocomplete="username"
+              autocapitalize="off"
               required
               :placeholder="$t('login.usernamePlaceholder')"
               class="h-12"
@@ -111,13 +167,74 @@ const handleLogin = () => {
               id="password"
               v-model="password"
               type="password"
+              dir="ltr"
               autocomplete="current-password"
               required
               :placeholder="$t('login.passwordPlaceholder')"
               class="h-12"
             />
           </div>
-          <Button type="submit" size="lg" class="h-12 w-full">
+          <p v-if="error" role="alert" class="text-sm font-medium text-destructive">
+            {{ error }}
+          </p>
+          <Button type="submit" size="lg" class="h-12 w-full" :disabled="busy">
+            <Loader2 v-if="busy" class="animate-spin" />
+            {{ $t("login.submit") }}
+          </Button>
+        </form>
+
+        <form v-else class="mt-6 space-y-5" @submit.prevent="handlePin">
+          <label for="pin" class="sr-only">{{ $t("staff.fields.pin") }}</label>
+          <input
+            id="pin"
+            ref="pinInput"
+            v-model="pin"
+            type="password"
+            inputmode="numeric"
+            autocomplete="off"
+            maxlength="6"
+            dir="ltr"
+            class="h-14 w-full rounded-lg border border-input bg-card text-center text-3xl tracking-[0.5em] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            @input="pin = pin.replace(/\D/g, ''); error = ''"
+          />
+          <!-- Touch keypad; digits read left-to-right in every language -->
+          <div class="grid grid-cols-3 gap-2" dir="ltr">
+            <button
+              v-for="k in ['1', '2', '3', '4', '5', '6', '7', '8', '9']"
+              :key="k"
+              type="button"
+              class="h-14 rounded-lg border bg-card text-xl font-medium hover:bg-accent active:scale-[0.97]"
+              @click="pressKey(k)"
+            >
+              {{ k }}
+            </button>
+            <span />
+            <button
+              type="button"
+              class="h-14 rounded-lg border bg-card text-xl font-medium hover:bg-accent active:scale-[0.97]"
+              @click="pressKey('0')"
+            >
+              0
+            </button>
+            <button
+              type="button"
+              class="grid h-14 place-items-center rounded-lg text-muted-foreground hover:bg-accent"
+              :aria-label="$t('login.backspace')"
+              @click="pressKey('back')"
+            >
+              <Delete :size="22" />
+            </button>
+          </div>
+          <p v-if="error" role="alert" class="text-sm font-medium text-destructive">
+            {{ error }}
+          </p>
+          <Button
+            type="submit"
+            size="lg"
+            class="h-12 w-full"
+            :disabled="busy || pin.length < 4"
+          >
+            <Loader2 v-if="busy" class="animate-spin" />
             {{ $t("login.submit") }}
           </Button>
         </form>

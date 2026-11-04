@@ -1,4 +1,4 @@
-import { getDb, selectOne } from "./client";
+import { select, selectOne } from "./client";
 
 export interface Category {
   id: number;
@@ -43,7 +43,7 @@ const PRODUCT_FROM = `
   WHERE p.is_active = 1`;
 
 export const listCategories = async () =>
-  (await getDb()).select<Category>(
+  select<Category>(
     `SELECT id, name, name_ku, name_ar, color FROM categories
      WHERE is_active = 1 ORDER BY display_order, name`,
   );
@@ -77,7 +77,7 @@ export const listProducts = async (query: ProductQuery = {}) => {
     query.limit != null
       ? ` LIMIT ${Math.trunc(query.limit)} OFFSET ${Math.trunc(query.offset ?? 0)}`
       : "";
-  return (await getDb()).select<Product>(
+  return select<Product>(
     `SELECT ${PRODUCT_COLUMNS} ${PRODUCT_FROM}${sql} ORDER BY c.display_order, p.name${page}`,
     params,
   );

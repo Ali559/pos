@@ -37,3 +37,22 @@ export const formatDateTime = (date: Date, lang: Language = currentLanguage()) =
     numberingSystem: "latn",
   });
 };
+
+/** "18:00" — 24-hour clock with Western digits in every language. */
+export const formatTime = (date: Date, lang: Language = currentLanguage()) =>
+  date.toLocaleTimeString(numberLocale(lang), {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    numberingSystem: "latn",
+  });
+
+/** Short weekday + day, e.g. for schedule column headers. */
+export const formatDay = (date: Date, lang: Language = currentLanguage()) => {
+  if (lang === "ku" && !hasCkb) return `${KU_WEEKDAYS[date.getDay()]} ${date.getDate()}`;
+  return date.toLocaleDateString(languages[lang].intl, {
+    weekday: "short",
+    day: "numeric",
+    numberingSystem: "latn",
+  });
+};

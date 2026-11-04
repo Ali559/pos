@@ -1,4 +1,5 @@
-import { getDb, selectOne } from "./client";
+import { selectOne } from "./client";
+import { call } from "@/lib/ipc";
 
 export const getSetting = async (key: string) =>
   (await selectOne<{ value: string | null }>(
@@ -6,10 +7,6 @@ export const getSetting = async (key: string) =>
     [key],
   ))?.value ?? null;
 
-export const setSetting = async (key: string, value: string) => {
-  await (await getDb()).execute(
-    `INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
-    [key, value],
-  );
-};
+/** Rust decides who may change which key (src-tauri/src/settings.rs). */
+export const setSetting = (key: string, value: string) =>
+  call("set_setting", { key, value });

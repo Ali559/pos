@@ -9,6 +9,7 @@ import {
   uploadMedia,
   type MediaFile,
 } from "@/lib/media";
+import { errorMessage } from "@/lib/errors";
 
 const logo = defineModel<MediaFile | null>({ required: true });
 
@@ -24,7 +25,7 @@ const onFile = async (e: Event) => {
   try {
     logo.value = await uploadMedia(file);
   } catch (err) {
-    error.value = String(err);
+    error.value = errorMessage(err);
   } finally {
     uploading.value = false;
     if (input.value) input.value.value = "";

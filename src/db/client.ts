@@ -1,39 +1,14 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { call } from "@/lib/ipc";
 
-// The same database URL the Rust side preloads and migrates (src-tauri/src/db.rs)
-export const DB_URL = "sqlite:pos.db";
+// The WebView reads through the Rust `select` command, which runs on a
+// read-only SQLite connection (src-tauri/src/query.rs). Writes go through
+// the permission-checked commands; there is no `execute` here on purpose.
 
-export interface QueryResult {
-  rowsAffected: number;
-  lastInsertId?: number;
-}
-
-export interface Db {
-  select<T>(sql: string, params?: unknown[]): Promise<T[]>;
-  execute(sql: string, params?: unknown[]): Promise<QueryResult>;
-}
-
-/** True when running inside the desktop app (not the plain-browser dev preview). */
-export const inDesktopApp = isTauri();
-
-let db: Promise<Db> | null = null;
-
-const connect = async (): Promise<Db> => {
-  if (inDesktopApp) {
-    const { default: Database } = await import("@tauri-apps/plugin-sql");
-    return Database.load(DB_URL);
-  }
-  // `bun run dev` in a normal browser: an in-memory SQLite (sql.js) running
-  // the same migrations. Stripped from production builds.
-  if (import.meta.env.DEV) {
-    const { createBrowserDb } = await import("./browser");
-    return createBrowserDb();
-  }
-  throw new Error("The database is only available in the desktop app.");
-};
-
-export const getDb = () => (db ??= connect());
+export const select = <T>(sql: string, params: unknown[] = []) =>
+  call<T[]>("select", { sql, params });
 
 /** First row or null. */
 export const selectOne = async <T>(sql: string, params?: unknown[]) =>
-  (await (await getDb()).select<T>(sql, params))[0] ?? null;
+  (await select<T>(sql, params))[0] ?? null;
+
+export { inDesktopApp } from "@/lib/ipc";

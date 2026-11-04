@@ -8,7 +8,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri::{ipc::InvokeBody, AppHandle, Manager, Runtime};
 
-use crate::db;
+use crate::auth;
+use crate::ctx::Ctx;
 use crate::error::{Error, Result};
 
 pub const WEBP_QUALITY: f32 = 80.0;
@@ -87,27 +88,25 @@ pub fn get_media_dir(app: AppHandle) -> Result<String> {
     Ok(media_dir(&app)?.to_string_lossy().into_owned())
 }
 
-/// Takes the raw file bytes as the request body (no JSON/base64 overhead).
-/// Optional header `x-file-name` (URI-encoded) is stored as `original_name`.
-#[tauri::command]
-pub async fn upload_media(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<MediaFile> {
-    let InvokeBody::Raw(bytes) = request.body() else {
-        return Err(Error::Invalid("expected raw file bytes".into()));
-    };
+/// Uploads need a signed-in user, except during first-run setup (the shop
+/// logo is chosen before the owner account exists).
+async fn may_upload(ctx: &Ctx) -> Result<()> {
+    if auth::needs_setup(ctx).await? {
+        return Ok(());
+    }
+    auth::current(ctx).await.map(|_| ())
+}
+
+/// Processes and stores one image. Shared by the command and the dev bridge.
+pub async fn upload(ctx: &Ctx, bytes: Vec<u8>, original_name: Option<String>) -> Result<MediaFile> {
+    may_upload(ctx).await?;
     if bytes.is_empty() {
         return Err(Error::Invalid("the file is empty".into()));
     }
     if bytes.len() > MAX_UPLOAD_BYTES {
-        return Err(Error::Invalid("the file is larger than 25 MB".into()));
+        return Err(Error::Rule("file_too_large"));
     }
-    let original_name = request
-        .headers()
-        .get("x-file-name")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
-
-    let pool = db::pool(&app).await?;
-    let sha256 = format!("{:x}", Sha256::digest(bytes));
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
 
     // Same file uploaded again: reuse the stored copy
     if let Some(existing) = sqlx::query_as::<_, MediaFile>(
@@ -115,25 +114,24 @@ pub async fn upload_media(app: AppHandle, request: tauri::ipc::Request<'_>) -> R
          FROM media_files WHERE sha256 = $1 LIMIT 1",
     )
     .bind(&sha256)
-    .fetch_optional(&pool)
+    .fetch_optional(&ctx.pool)
     .await?
     {
         return Ok(existing);
     }
 
-    let input = bytes.clone();
-    let processed = tauri::async_runtime::spawn_blocking(move || process_image(&input))
+    let processed = tauri::async_runtime::spawn_blocking(move || process_image(&bytes))
         .await
         .map_err(|e| Error::Invalid(e.to_string()))??;
 
     let uuid = uuid::Uuid::new_v4().to_string();
     let path = format!("{uuid}.webp");
-    std::fs::write(media_dir(&app)?.join(&path), &processed.webp)?;
+    std::fs::write(ctx.media_dir.join(&path), &processed.webp)?;
 
     let id = sqlx::query(
         "INSERT INTO media_files
-           (uuid, path, mime, width, height, bytes, blurhash, sha256, original_name)
-         VALUES ($1, $2, 'image/webp', $3, $4, $5, $6, $7, $8)",
+           (uuid, path, mime, width, height, bytes, blurhash, sha256, original_name, created_by)
+         VALUES ($1, $2, 'image/webp', $3, $4, $5, $6, $7, $8, $9)",
     )
     .bind(&uuid)
     .bind(&path)
@@ -143,7 +141,8 @@ pub async fn upload_media(app: AppHandle, request: tauri::ipc::Request<'_>) -> R
     .bind(&processed.blurhash)
     .bind(&sha256)
     .bind(&original_name)
-    .execute(&pool)
+    .bind(ctx.session.get().map(|k| k.user_id))
+    .execute(&ctx.pool)
     .await?
     .last_insert_rowid();
 
@@ -157,6 +156,22 @@ pub async fn upload_media(app: AppHandle, request: tauri::ipc::Request<'_>) -> R
         bytes: processed.webp.len() as i64,
         blurhash: processed.blurhash,
     })
+}
+
+/// Takes the raw file bytes as the request body (no JSON/base64 overhead).
+/// Optional header `x-file-name` (URI-encoded) is stored as `original_name`.
+#[tauri::command]
+pub async fn upload_media(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<MediaFile> {
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err(Error::Invalid("expected raw file bytes".into()));
+    };
+    let original_name = request
+        .headers()
+        .get("x-file-name")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let ctx = Ctx::from_app(&app).await?;
+    upload(&ctx, bytes.clone(), original_name).await
 }
 
 #[cfg(test)]

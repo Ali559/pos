@@ -30,6 +30,10 @@ blurhash = "0.2.3"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 thiserror = "2"
+argon2 = { version = "0.5", features = ["std"] }
+chrono = "0.4"
+tiny_http = "0.12"
+tokio = { version = "1", features = ["sync"] }
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.

@@ -1,4 +1,5 @@
-import { getDb, selectOne } from "./client";
+import { selectOne } from "./client";
+import { call } from "@/lib/ipc";
 import type { MediaFile } from "@/lib/media";
 
 export interface ShopProfile {
@@ -64,19 +65,6 @@ export const getShopProfile = async (): Promise<ShopProfileWithLogo | null> => {
   };
 };
 
-/** Creates or replaces the single shop_profile row. Empty strings become NULL. */
-export const saveShopProfile = async (profile: ShopProfile) => {
-  const values = FIELDS.map((f) => {
-    const v = profile[f];
-    return typeof v === "string" && v.trim() === "" ? null : v;
-  });
-  const placeholders = FIELDS.map((_, i) => `$${i + 1}`).join(", ");
-  await (await getDb()).execute(
-    `INSERT INTO shop_profile (id, ${FIELDS.join(", ")}, updated_at)
-     VALUES (1, ${placeholders}, CURRENT_TIMESTAMP)
-     ON CONFLICT(id) DO UPDATE SET
-       ${FIELDS.map((f) => `${f} = excluded.${f}`).join(", ")},
-       updated_at = CURRENT_TIMESTAMP`,
-    values,
-  );
-};
+/** Creates or replaces the single shop_profile row (needs `settings.shop`). */
+export const saveShopProfile = (profile: ShopProfile) =>
+  call("save_shop_profile", { profile });

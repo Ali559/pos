@@ -1,5 +1,14 @@
 import { createMemoryHistory, createRouter } from "vue-router";
 import { useShop } from "@/stores/shop";
+import { landingPath, useAuth } from "@/stores/auth";
+
+declare module "vue-router" {
+  interface RouteMeta {
+    titleKey?: string;
+    /** Needed to open the screen. A UI guard only; Rust checks every action. */
+    permission?: string;
+  }
+}
 
 // * Router Config
 export const router = createRouter({
@@ -19,30 +28,36 @@ export const router = createRouter({
       path: "/main",
       name: "main",
       component: () => import("@/layouts/MainLayout.vue"),
-      redirect: "/main/point-of-sale",
+      redirect: () => landingPath(),
       children: [
         {
           path: "point-of-sale",
-          meta: { titleKey: "sidebar.pointOfSale" },
           name: "Point of Sale",
+          meta: { titleKey: "sidebar.pointOfSale", permission: "sales.sell" },
           component: () => import("@/views/SalesView.vue"),
         },
         {
           path: "inventory",
-          meta: { titleKey: "sidebar.inventory" },
           name: "Inventory",
+          meta: { titleKey: "sidebar.inventory", permission: "inventory.view" },
           component: () => import("@/views/InventoryView.vue"),
         },
         {
           path: "analytics",
-          meta: { titleKey: "sidebar.analytics" },
           name: "Analytics",
+          meta: { titleKey: "sidebar.analytics", permission: "analytics.view" },
           component: () => import("@/views/AnalyticsView.vue"),
         },
         {
+          path: "staff",
+          name: "Staff",
+          meta: { titleKey: "sidebar.staff", permission: "staff.view" },
+          component: () => import("@/views/StaffView.vue"),
+        },
+        {
           path: "settings",
-          meta: { titleKey: "sidebar.settings" },
           name: "Settings",
+          meta: { titleKey: "sidebar.settings" },
           component: () => import("@/views/SettingsView.vue"),
         },
       ],
@@ -50,17 +65,24 @@ export const router = createRouter({
   ],
 });
 
-// First run: nothing works until the shop has a name
 router.beforeEach(async (to) => {
   const shop = useShop();
+  const auth = useAuth();
   try {
-    await shop.load();
+    await Promise.all([shop.load(), auth.refresh()]);
   } catch (e) {
-    console.error("[router] could not load shop profile", e);
+    console.error("[router] could not load app state", e);
     return true;
   }
-  const hasShop = shop.profile.value !== null;
-  if (!hasShop && to.path !== "/setup") return "/setup";
-  if (hasShop && to.path === "/setup") return "/";
+
+  // First run: shop details and an owner account before anything else
+  const needsSetup = auth.needsSetup.value || shop.profile.value === null;
+  if (needsSetup) return to.path === "/setup" ? true : "/setup";
+  if (to.path === "/setup") return "/";
+
+  const signedIn = auth.session.value !== null;
+  if (to.path.startsWith("/main") && !signedIn) return "/";
+  if (to.path === "/" && signedIn) return landingPath();
+  if (to.meta.permission && !auth.can(to.meta.permission)) return landingPath();
   return true;
 });

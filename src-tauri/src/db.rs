@@ -23,7 +23,32 @@ pub fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0002_shop_media_i18n.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 3,
+            description: "people",
+            sql: include_str!("../migrations/0003_people.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
+}
+
+/// Same file as `DB_URL` (plugin-sql puts it in the app config dir).
+pub fn db_path<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf> {
+    Ok(app.path().app_config_dir()?.join("pos.db"))
+}
+
+/// A second pool on the same file, opened read-only, for WebView reads.
+pub struct ReadPool(pub SqlitePool);
+
+/// Called from Tauri's setup hook, which isn't inside the async runtime, so
+/// the pool (which spawns background tasks) is built on that runtime. The
+/// sql plugin has already created and migrated the file by then.
+pub fn open_read_pool<R: Runtime>(app: &AppHandle<R>) -> Result<ReadPool> {
+    let opts = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(db_path(app)?)
+        .read_only(true);
+    let pool = tauri::async_runtime::block_on(SqlitePool::connect_with(opts))?;
+    Ok(ReadPool(pool))
 }
 
 /// The SQLite pool owned by tauri-plugin-sql, shared with Rust commands so
@@ -38,18 +63,20 @@ pub async fn pool<R: Runtime>(app: &AppHandle<R>) -> Result<SqlitePool> {
 }
 
 /// Loads the sample catalog. Debug builds only; refuses if products exist.
-#[cfg(debug_assertions)]
-#[tauri::command]
-pub async fn seed_demo_data(app: AppHandle) -> Result<()> {
-    let pool = pool(&app).await?;
+pub async fn seed_demo_data(ctx: &crate::ctx::Ctx) -> Result<()> {
+    if !cfg!(debug_assertions) {
+        return Err(Error::Rule("dev_only"));
+    }
+    crate::auth::require(ctx, "settings.system").await?;
+    let pool = &ctx.pool;
     let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM products")
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?;
     if count > 0 {
         return Err(Error::Invalid("the catalog already has products".into()));
     }
     sqlx::raw_sql(include_str!("../seeds/demo.sql"))
-        .execute(&pool)
+        .execute(pool)
         .await?;
     Ok(())
 }

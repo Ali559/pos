@@ -1,7 +1,11 @@
+use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
-/// Errors returned to the front end by commands. Serialized as a plain
-/// message string so `invoke()` rejects with something displayable.
+/// Errors returned to the front end by commands.
+///
+/// Serialized as `{ code, message, detail? }`. `code` is stable and is what
+/// the UI translates (`errors.<code>` in the locale files); `message` is an
+/// English fallback for logs and unknown codes.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("database is not ready")]
@@ -14,15 +18,54 @@ pub enum Error {
     Image(#[from] image::ImageError),
     #[error("could not compute the blurhash")]
     Blurhash,
-    #[error("{0}")]
-    Invalid(String),
     #[error(transparent)]
     Tauri(#[from] tauri::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error("could not hash the password")]
+    Hash,
+
+    /// Input that fails validation; message is shown as-is
+    #[error("{0}")]
+    Invalid(String),
+    #[error("sign in first")]
+    NotSignedIn,
+    #[error("missing permission {0}")]
+    Forbidden(String),
+    #[error("wrong username, password or PIN")]
+    BadCredentials,
+    #[error("not found")]
+    NotFound,
+    /// A business rule refused the action; the code says which one
+    #[error("{0}")]
+    Rule(&'static str),
+}
+
+impl Error {
+    pub fn code(&self) -> &str {
+        match self {
+            Error::Invalid(_) => "invalid",
+            Error::NotSignedIn => "not_signed_in",
+            Error::Forbidden(_) => "forbidden",
+            Error::BadCredentials => "bad_credentials",
+            Error::NotFound => "not_found",
+            Error::Rule(code) => code,
+            Error::Image(_) | Error::Blurhash => "bad_image",
+            _ => "internal",
+        }
+    }
 }
 
 impl Serialize for Error {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.to_string())
+        let mut s = serializer.serialize_struct("Error", 3)?;
+        s.serialize_field("code", self.code())?;
+        s.serialize_field("message", &self.to_string())?;
+        match self {
+            Error::Forbidden(permission) => s.serialize_field("detail", permission)?,
+            _ => s.skip_field("detail")?,
+        }
+        s.end()
     }
 }
 

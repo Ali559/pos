@@ -33,5 +33,13 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+    // 4. a browser tab on :1420 reaches the running app's Rust commands
+    //    through its debug-only bridge (src-tauri/src/bridge.rs)
+    proxy: {
+      "/__bridge": {
+        target: "http://127.0.0.1:1430",
+        rewrite: (path) => path.replace(/^\/__bridge/, ""),
+      },
+    },
   },
 }));

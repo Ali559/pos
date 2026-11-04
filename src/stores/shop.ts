@@ -32,6 +32,7 @@ export const useShop = () => ({
   taxRate,
   loaded,
   load,
+  reload,
   /** Shop name in the current UI language, falling back to English. */
   name: computed(() => (profile.value ? localized(profile.value, "name") : "")),
   currency: computed(() => profile.value?.currency ?? "IQD"),
