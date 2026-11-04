@@ -1,9 +1,15 @@
 import { createMemoryHistory, createRouter } from "vue-router";
+import { useShop } from "@/stores/shop";
 
 // * Router Config
 export const router = createRouter({
   history: createMemoryHistory(),
   routes: [
+    {
+      path: "/setup",
+      name: "Setup",
+      component: () => import("@/views/SetupView.vue"),
+    },
     {
       path: "/",
       name: "Login",
@@ -42,4 +48,19 @@ export const router = createRouter({
       ],
     },
   ],
+});
+
+// First run: nothing works until the shop has a name
+router.beforeEach(async (to) => {
+  const shop = useShop();
+  try {
+    await shop.load();
+  } catch (e) {
+    console.error("[router] could not load shop profile", e);
+    return true;
+  }
+  const hasShop = shop.profile.value !== null;
+  if (!hasShop && to.path !== "/setup") return "/setup";
+  if (hasShop && to.path === "/setup") return "/";
+  return true;
 });

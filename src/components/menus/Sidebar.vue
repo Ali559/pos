@@ -3,7 +3,6 @@ import {
   ChartColumn,
   LogOut,
   Package,
-  ReceiptText,
   ScanBarcode,
   Settings,
 } from "lucide-vue-next";
@@ -22,15 +21,8 @@ const items = [
 
 <template>
   <nav
-    class="flex h-full w-[88px] shrink-0 flex-col items-center bg-sidebar py-4 text-sidebar-foreground"
+    class="flex h-full w-[88px] shrink-0 flex-col items-center bg-sidebar pt-3 pb-4 text-sidebar-foreground"
   >
-    <div
-      class="mb-6 grid size-11 place-items-center rounded-lg bg-brand text-brand-foreground"
-      aria-hidden="true"
-    >
-      <ReceiptText :size="22" />
-    </div>
-
     <ul class="flex w-full flex-1 flex-col gap-1 px-2">
       <li v-for="item in items" :key="item.to">
         <button

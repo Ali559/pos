@@ -5,13 +5,27 @@ import { ReceiptText } from "lucide-vue-next";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import RTLToggle from "@/components/RTLToggle.vue";
+import LanguageSwitcher from "@/components/LanguageSwitcher.vue";
+import MediaImage from "@/components/media/MediaImage.vue";
 import { useTimeManager } from "@/hooks/useTimeManager";
+import { formatCurrency } from "@/lib/format";
+import { useShop } from "@/stores/shop";
 
 const router = useRouter();
 const username = ref("");
 const password = ref("");
 const { timeOfDay } = useTimeManager();
+const { profile, name } = useShop();
+
+// Decorative receipt on the brand panel, priced in the shop's currency
+const sample = [
+  { name: "Coca-Cola 330ml ×2", price: 1500 },
+  { name: "Samoon bread (5)", price: 1000 },
+  { name: "Fresh milk 1L", price: 1750 },
+  { name: "Pomegranates 1kg", price: 3000 },
+  { name: "Klicha date cookies", price: 3500 },
+];
+const sampleTotal = sample.reduce((n, l) => n + l.price, 0);
 
 const handleLogin = () => {
   // Add your login logic here
@@ -25,8 +39,16 @@ const handleLogin = () => {
     <aside
       class="relative hidden flex-col justify-between overflow-hidden bg-brand p-12 text-brand-foreground lg:flex"
     >
-      <div class="grid size-12 place-items-center rounded-xl bg-sun text-sun-foreground">
-        <ReceiptText :size="24" />
+      <div
+        class="grid size-14 place-items-center overflow-hidden rounded-xl bg-sun text-sun-foreground"
+      >
+        <MediaImage
+          v-if="profile?.logo"
+          :media="profile.logo"
+          fit="contain"
+          class="size-full bg-white"
+        />
+        <ReceiptText v-else :size="26" />
       </div>
 
       <!-- receipt tape fed from the top edge: the till's own object -->
@@ -38,22 +60,22 @@ const handleLogin = () => {
           <span>#1042</span><span>{{ timeOfDay }}</span>
         </div>
         <div class="space-y-3 text-[15px]">
-          <div class="flex justify-between"><span>Coca-Cola 330ml ×2</span><span>$1.50</span></div>
-          <div class="flex justify-between"><span>Samoon bread (5)</span><span>$0.50</span></div>
-          <div class="flex justify-between"><span>Fresh milk 1L</span><span>$1.25</span></div>
-          <div class="flex justify-between"><span>Pomegranates 1kg</span><span>$2.00</span></div>
-          <div class="flex justify-between"><span>Klicha date cookies</span><span>$2.75</span></div>
+          <div v-for="line in sample" :key="line.name" class="flex justify-between gap-4">
+            <bdi>{{ line.name }}</bdi><span>{{ formatCurrency(line.price) }}</span>
+          </div>
           <div class="rule-dashed !my-5" />
           <div class="flex items-baseline justify-between">
-            <span class="font-semibold">Total</span>
-            <span class="text-4xl font-bold tracking-tight">$8.80</span>
+            <span class="font-semibold">{{ $t("pos.total") }}</span>
+            <span class="text-4xl font-bold tracking-tight">{{
+              formatCurrency(sampleTotal)
+            }}</span>
           </div>
         </div>
       </div>
 
       <div>
-        <p class="text-6xl leading-none font-semibold tracking-tight">
-          {{ $t("login.title") }}
+        <p class="text-6xl leading-tight font-semibold tracking-tight">
+          {{ name || $t("login.title") }}
         </p>
         <p class="mt-4 text-sm opacity-70">{{ timeOfDay }}</p>
       </div>
@@ -62,7 +84,7 @@ const handleLogin = () => {
     <!-- Form side -->
     <main class="flex flex-col p-6 sm:p-10">
       <div class="flex justify-end">
-        <RTLToggle />
+        <LanguageSwitcher />
       </div>
       <div class="m-auto w-full max-w-sm">
         <h1 class="text-3xl font-semibold tracking-tight">

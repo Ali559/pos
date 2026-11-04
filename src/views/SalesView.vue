@@ -13,13 +13,17 @@ import {
   X,
 } from "lucide-vue-next";
 import {
-  categories,
-  products,
+  findProductByCode,
+  listCategories,
+  listProducts,
   stockState,
-  type CategoryId,
+  type Category,
   type Product,
-} from "@/data/catalog";
+} from "@/db/catalog";
 import { formatCurrency } from "@/lib/format";
+import { categoryInk, categoryTint } from "@/lib/categoryColor";
+import { useShop } from "@/stores/shop";
+import { localized } from "@/utils/i18n";
 
 interface CartItem {
   id: number;
@@ -29,28 +33,30 @@ interface CartItem {
 }
 
 const { t } = useI18n();
-
-const TAX_RATE = 0.1;
+const { taxRate, load: loadShop } = useShop();
 
 // State
 const barcode = ref("");
 const scanInput = ref<HTMLInputElement | null>(null);
-const scanError = ref("");
-const activeCategory = ref<CategoryId | "all">("all");
+// The code that failed; the message is derived so it follows the language
+const notFoundCode = ref("");
+const scanError = computed(() =>
+  notFoundCode.value ? t("pos.notFound", { code: notFoundCode.value }) : "",
+);
+const categories = ref<Category[]>([]);
+const products = ref<Product[]>([]);
+const catalogLoaded = ref(false);
+const activeCategory = ref<number | null>(null);
 const payment = ref<"cash" | "card">("cash");
 const lastAdded = ref<number | null>(null);
 const receiptNo = ref(1042);
-const cartItems = ref<CartItem[]>([
-  { id: 1, name: "Coca-Cola 330ml", price: 0.75, quantity: 2 },
-  { id: 5, name: "Potato chips salted", price: 1.0, quantity: 1 },
-  { id: 11, name: "Samoon bread (5)", price: 0.5, quantity: 1 },
-]);
+const cartItems = ref<CartItem[]>([]);
 
 // Computed
 const visibleProducts = computed(() =>
-  activeCategory.value === "all"
-    ? products
-    : products.filter((p) => p.category === activeCategory.value),
+  activeCategory.value === null
+    ? products.value
+    : products.value.filter((p) => p.categoryId === activeCategory.value),
 );
 
 const qtyInCart = (id: number) =>
@@ -62,7 +68,7 @@ const itemCount = computed(() =>
 const subtotal = computed(() =>
   cartItems.value.reduce((sum, i) => sum + i.price * i.quantity, 0),
 );
-const tax = computed(() => subtotal.value * TAX_RATE);
+const tax = computed(() => (subtotal.value * taxRate.value) / 100);
 const total = computed(() => subtotal.value + tax.value);
 
 // Methods
@@ -80,15 +86,15 @@ const addProduct = (p: Product) => {
   }, 600);
 };
 
-const addItemByBarcode = () => {
+const addItemByBarcode = async () => {
   const code = barcode.value.trim();
   if (!code) return;
-  const product = products.find((p) => p.barcode === code || p.sku === code);
+  const product = await findProductByCode(code);
   if (!product) {
-    scanError.value = t("pos.notFound", { code });
+    notFoundCode.value = code;
     return;
   }
-  scanError.value = "";
+  notFoundCode.value = "";
   addProduct(product);
   barcode.value = "";
 };
@@ -120,7 +126,15 @@ const checkout = () => {
   clearCart();
 };
 
-onMounted(focusScan);
+onMounted(async () => {
+  focusScan();
+  [categories.value, products.value] = await Promise.all([
+    listCategories(),
+    listProducts(),
+    loadShop(),
+  ]);
+  catalogLoaded.value = true;
+});
 </script>
 
 <template>
@@ -151,7 +165,7 @@ onMounted(focusScan);
             autocomplete="off"
             :placeholder="$t('pos.barcodePlaceholder')"
             class="num h-full min-w-0 flex-1 bg-transparent text-xl tracking-wide outline-none placeholder:text-base placeholder:tracking-normal placeholder:text-muted-foreground"
-            @input="scanError = ''"
+            @input="notFoundCode = ''"
           />
           <kbd
             class="hidden rounded border bg-muted px-2 py-0.5 text-xs text-muted-foreground sm:block"
@@ -171,29 +185,35 @@ onMounted(focusScan);
         <button
           type="button"
           role="tab"
-          :aria-selected="activeCategory === 'all'"
-          @click="activeCategory = 'all'"
+          :aria-selected="activeCategory === null"
+          @click="activeCategory = null"
           class="h-9 rounded-full border px-4 text-sm font-medium transition-colors hover:border-foreground/30 aria-selected:border-foreground aria-selected:bg-foreground aria-selected:text-background"
         >
           {{ $t("pos.allCategories") }}
         </button>
         <button
           v-for="c in categories"
-          :key="c"
+          :key="c.id"
           type="button"
           role="tab"
-          :aria-selected="activeCategory === c"
-          @click="activeCategory = c"
+          :aria-selected="activeCategory === c.id"
+          @click="activeCategory = c.id"
           class="flex h-9 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors hover:border-foreground/30 aria-selected:border-foreground aria-selected:bg-foreground aria-selected:text-background"
         >
           <span
             class="size-2.5 rounded-full"
-            :style="{ background: `var(--cat-${c}-ink)` }"
+            :style="{ background: categoryInk(c.color) }"
           />
-          {{ $t(`categories.${c}`) }}
+          {{ localized(c, "name") }}
         </button>
       </div>
 
+      <p
+        v-if="catalogLoaded && products.length === 0"
+        class="rounded-xl border border-dashed p-10 text-center text-muted-foreground"
+      >
+        {{ $t("pos.emptyCatalog") }}
+      </p>
       <ul
         class="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3"
       >
@@ -204,8 +224,8 @@ onMounted(focusScan);
             :disabled="stockState(p) === 'out'"
             class="relative flex h-32 w-full flex-col rounded-xl p-3.5 text-start transition-[transform,box-shadow] hover:ring-2 hover:ring-foreground/15 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
             :style="{
-              background: `var(--cat-${p.category})`,
-              color: `var(--cat-${p.category}-ink)`,
+              background: categoryTint(p.categoryColor),
+              color: categoryInk(p.categoryColor),
             }"
           >
             <span
@@ -322,9 +342,9 @@ onMounted(focusScan);
             <dt class="text-muted-foreground">{{ $t("pos.subtotal") }}</dt>
             <dd class="num">{{ formatCurrency(subtotal) }}</dd>
           </div>
-          <div class="flex justify-between">
+          <div v-if="taxRate > 0" class="flex justify-between">
             <dt class="text-muted-foreground">
-              {{ $t("pos.tax") }} {{ TAX_RATE * 100 }}%
+              {{ $t("pos.tax") }} {{ taxRate }}%
             </dt>
             <dd class="num">{{ formatCurrency(tax) }}</dd>
           </div>

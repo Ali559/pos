@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import RTLProvider from "./components/providers/RTLProvider.vue";
+import LocaleProvider from "./components/providers/LocaleProvider.vue";
 </script>
 
 <template>
-  <r-t-l-provider>
+  <locale-provider>
     <router-view />
-  </r-t-l-provider>
+  </locale-provider>
 </template>

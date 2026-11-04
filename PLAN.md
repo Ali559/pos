@@ -16,9 +16,15 @@ The committed scope for the next stretch of work. `FEATURES.md` stays as the wid
 
 ---
 
-## 1. Foundations 🔜
+## 1. Foundations ✅
 
-Everything later depends on these.
+Everything later depends on these. Done 2026-11-04; see ARCHITECTURE.md for how it works.
+
+**Left over from Phase 1**
+- ⬜ Native-speaker review of `ku` and `ar` strings.
+- ⬜ Media cleanup job for files no row references (nothing can orphan a file yet except replacing the shop logo).
+- ⬜ HEIC decoding (iPhone photos) — not supported; JPEG/PNG/WebP/GIF/BMP are.
+- ⬜ Upload and image display verified only by Rust unit tests and type-checking; try a logo upload in `bun run tauri dev`.
 
 ### 1.1 Data layer and migrations
 - Move schema into versioned migrations registered with `tauri_plugin_sql::Builder::add_migrations` in `src-tauri/src/lib.rs`. `db.sql` becomes migration `0001`.
@@ -99,7 +105,7 @@ CREATE TABLE shop_profile (
 
 ---
 
-## 2. People ⬜
+## 2. People 🔜
 
 ### 2.1 RBAC, fully dynamic
 Replace the `users.role` text column and `user_permissions` with real roles and permissions.
@@ -294,10 +300,16 @@ CREATE TABLE expenses (
 4. **4.1, 4.2** — independent of each other.
 5. **2.4 + 4.3** — analytics last, once sales, shifts, and expenses produce real data.
 
+## Decisions (confirmed 2026-11-04)
+
+- **Icon library:** Tabler Icons via `@iconify-json/tabler`, bundled offline. Suggestions use a hand-made Kurdish/Arabic → English keyword map matched against Tabler's tags.
+- **Image encoding:** lossy WebP at quality 80 with the `webp` crate (libwebp); the `image` crate is used only to decode, orient and resize.
+- **Expiry:** tracked per batch in a `product_batches` table (§4.1).
+- **Languages:** language is the setting; text direction is derived from it (`en` → ltr, `ku`/`ar` → rtl).
+
 ## Open questions
 
-- **Currency:** IQD only, or IQD + USD with an exchange rate? This affects `products`, `sales`, `payments`, `expenses`, and every formatter.
+- **Currency:** IQD only, or IQD + USD with an exchange rate? Until decided, Phase 1 stores one shop currency in `shop_profile.currency` (default `IQD`) and every price is formatted through `src/lib/format.ts`, so a second currency can be added later without touching views.
 - **Product names:** do products need all three languages, or one name plus an optional translation?
-- **Expiry:** track per batch (accurate, more work at receiving) or a single expiry date per product (simple, less accurate)?
 - **Shifts:** is a scheduled rota needed, or only clock-in/out?
 - **Wages:** should employee performance include labour cost (sales per wage-hour)?

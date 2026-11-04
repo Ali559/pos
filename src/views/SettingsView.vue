@@ -6,6 +6,9 @@
           <TabsTrigger value="general" class="">
             {{ $t("settings.tabs.general") }}
           </TabsTrigger>
+          <TabsTrigger value="shop">
+            {{ $t("settings.tabs.shop") }}
+          </TabsTrigger>
           <TabsTrigger value="roles" class="">
             {{ $t("settings.tabs.roles") }}
           </TabsTrigger>
@@ -15,84 +18,105 @@
         </TabsList>
 
         <!-- General Tab -->
-        <TabsContent value="general">
+        <TabsContent value="general" class="space-y-5">
           <Card>
             <CardHeader>
-              <CardTitle class="">
-                {{ $t("settings.general.title") }}
-              </CardTitle>
+              <CardTitle>{{ $t("settings.general.appearance") }}</CardTitle>
             </CardHeader>
-            <CardContent class="space-y-6">
-              <div class="space-y-4">
-                <h3 class="font-semibold">
-                  {{ $t("settings.general.appearance") }}
-                </h3>
-                <div class="space-y-2">
-                  <Select v-model="theme" :key="$i18n.locale">
-                    <SelectTrigger class="w-full max-w-xs">
-                      <SelectValue
-                        :placeholder="$t('settings.general.selectTheme')"
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="light">
-                        {{ $t("settings.general.light") }}
-                      </SelectItem>
-                      <SelectItem value="dark">
-                        {{ $t("settings.general.dark") }}
-                      </SelectItem>
-                      <SelectItem value="system">
-                        {{ $t("settings.general.system") }}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div class="space-y-4">
-                <h3 class="font-semibold">
-                  {{ $t("settings.general.storeInfo") }}
-                </h3>
-                <div class="grid md:grid-cols-2 gap-4">
-                  <div class="space-y-2">
-                    <Label for="storeName">
-                      {{ $t("settings.general.storeName") }}
-                    </Label>
-                    <Input
-                      id="storeName"
-                      v-model="storeName"
-                      :placeholder="$t('settings.general.storeNamePlaceholder')"
-                      class=""
-                    />
-                  </div>
-                  <div class="space-y-2">
-                    <Label for="taxRate">
-                      {{ $t("settings.general.taxRate") }}
-                    </Label>
-                    <div class="relative">
-                      <Input
-                        id="taxRate"
-                        v-model="taxRate"
-                        type="number"
-                        class="pe-12"
-                      />
-                      <div
-                        class="absolute end-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                      >
-                        %
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <Button @click="saveSettings">
-                {{ $t("settings.save") }}
-              </Button>
+            <CardContent class="space-y-2">
+              <Label>{{ $t("settings.general.theme") }}</Label>
+              <Select v-model="theme" :key="$i18n.locale">
+                <SelectTrigger class="w-full max-w-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="light">
+                    {{ $t("settings.general.light") }}
+                  </SelectItem>
+                  <SelectItem value="dark">
+                    {{ $t("settings.general.dark") }}
+                  </SelectItem>
+                  <SelectItem value="system">
+                    {{ $t("settings.general.system") }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>{{ $t("settings.general.sales") }}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form class="flex items-end gap-3" @submit.prevent="saveTax">
+                <div class="space-y-2">
+                  <Label for="taxRate">{{ $t("settings.general.taxRate") }}</Label>
+                  <div class="relative w-40">
+                    <Input
+                      id="taxRate"
+                      v-model.number="taxDraft"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.5"
+                      dir="ltr"
+                      class="pe-9"
+                    />
+                    <span
+                      class="absolute end-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                      >%</span
+                    >
+                  </div>
+                </div>
+                <Button type="submit" :disabled="taxDraft === shop.taxRate.value">
+                  {{ $t("common.save") }}
+                </Button>
+                <span v-if="taxSaved" class="pb-2.5 text-sm text-success">
+                  {{ $t("common.saved") }}
+                </span>
+              </form>
+            </CardContent>
+          </Card>
+
+          <Card v-if="showSampleData">
+            <CardHeader>
+              <CardTitle>{{ $t("settings.general.sampleData") }}</CardTitle>
+            </CardHeader>
+            <CardContent class="flex items-center gap-4">
+              <p class="flex-1 text-sm text-muted-foreground">
+                {{ $t("settings.general.sampleDataHint") }}
+              </p>
+              <Button variant="outline" @click="loadSampleData">
+                {{ $t("settings.general.loadSampleData") }}
+              </Button>
+            </CardContent>
+            <CardContent v-if="sampleMessage" class="-mt-2 text-sm" role="status">
+              {{ sampleMessage }}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <!-- Shop Tab -->
+        <TabsContent value="shop">
+          <form v-if="shopForm" @submit.prevent="saveShop">
+            <Card>
+              <CardContent>
+                <ShopForm v-model="shopForm" v-model:logo="shopLogo" />
+              </CardContent>
+              <CardContent class="flex items-center gap-3 border-t pt-5">
+                <Button type="submit" :disabled="shopSaving">
+                  {{ shopSaving ? $t("common.saving") : $t("common.save") }}
+                </Button>
+                <span v-if="shopSaved" class="text-sm text-success">
+                  {{ $t("common.saved") }}
+                </span>
+                <span v-if="shopError" role="alert" class="text-sm text-destructive">
+                  {{ shopError }}
+                </span>
+              </CardContent>
+            </Card>
+          </form>
         </TabsContent>
 
         <!-- Roles Tab -->
@@ -259,7 +283,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -280,15 +304,81 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Pencil, Plus, Trash2 } from "lucide-vue-next";
 import { useTheme } from "@/hooks/useTheme";
+import { invoke } from "@tauri-apps/api/core";
+import { useI18n } from "vue-i18n";
+import ShopForm from "@/components/shop/ShopForm.vue";
+import { useShop } from "@/stores/shop";
+import { inDesktopApp } from "@/db/client";
+import type { ShopProfile } from "@/db/shop";
+import type { MediaFile } from "@/lib/media";
+
+const { t } = useI18n();
 
 const activeTab = ref("general");
 const { theme } = useTheme();
-const storeName = ref("My Store");
-const taxRate = ref(10);
+const shop = useShop();
+
+// Tax rate
+const taxDraft = ref(0);
+const taxSaved = ref(false);
+const saveTax = async () => {
+  await shop.saveTaxRate(Math.min(100, Math.max(0, Number(taxDraft.value) || 0)));
+  taxDraft.value = shop.taxRate.value;
+  taxSaved.value = true;
+  setTimeout(() => (taxSaved.value = false), 2000);
+};
+
+// Shop profile
+const shopForm = ref<ShopProfile | null>(null);
+const shopLogo = ref<MediaFile | null>(null);
+const shopSaving = ref(false);
+const shopSaved = ref(false);
+const shopError = ref("");
+
+const resetShopForm = () => {
+  const p = shop.profile.value;
+  if (!p) return;
+  const { logo, ...fields } = p;
+  shopForm.value = { ...fields };
+  shopLogo.value = logo;
+};
+
+const saveShop = async () => {
+  if (!shopForm.value) return;
+  shopSaving.value = true;
+  shopError.value = "";
+  try {
+    await shop.save(shopForm.value);
+    resetShopForm();
+    shopSaved.value = true;
+    setTimeout(() => (shopSaved.value = false), 2000);
+  } catch (e) {
+    shopError.value = String(e);
+  } finally {
+    shopSaving.value = false;
+  }
+};
+
+// Sample data: dev builds of the desktop app only (the browser preview seeds itself)
+const showSampleData = import.meta.env.DEV && inDesktopApp;
+const sampleMessage = ref("");
+const loadSampleData = async () => {
+  try {
+    await invoke("seed_demo_data");
+    sampleMessage.value = t("settings.general.sampleDataLoaded");
+  } catch (e) {
+    sampleMessage.value = String(e);
+  }
+};
+
+onMounted(async () => {
+  await shop.load();
+  taxDraft.value = shop.taxRate.value;
+  resetShopForm();
+});
 
 const roles = ref([
   {
@@ -330,13 +420,6 @@ const users = ref([
   },
 ]);
 
-const saveSettings = () => {
-  console.log("Settings saved:", {
-    theme: theme.value,
-    storeName: storeName.value,
-    taxRate: taxRate.value,
-  });
-};
 
 const openRoleModal = () => {
   console.log("Open role modal");

@@ -1,4 +1,5 @@
 @import "@fontsource-variable/schibsted-grotesk";
+@import "@fontsource-variable/vazirmatn";
 
 @import "tailwindcss";
 @import "tw-animate-css";
@@ -65,17 +66,6 @@ textarea {
   --chart-4: #c8432b;
   --chart-5: #8a6bb8;
 
-  /* category tints – tile background / dot */
-  --cat-beverages: #dbe8f7;
-  --cat-beverages-ink: #2d5a8f;
-  --cat-snacks: #fbe7c6;
-  --cat-snacks-ink: #94600c;
-  --cat-dairy: #e9e3f6;
-  --cat-dairy-ink: #5f4996;
-  --cat-bakery: #f6ded6;
-  --cat-bakery-ink: #9a3f26;
-  --cat-produce: #dcefdc;
-  --cat-produce-ink: #2f6b38;
 
   --sidebar: #17201c;
   --sidebar-foreground: #c9d1cc;
@@ -88,8 +78,11 @@ textarea {
 
   --font-sans:
     "Schibsted Grotesk Variable", "Segoe UI", system-ui, sans-serif;
+  /* Vazirmatn covers the Sorani letters (ڕ ڵ ێ ۆ ە) Sarchia Makka may lack */
   --font-kurdish:
-    "Sarchia Makka", "Schibsted Grotesk Variable", "Segoe UI", system-ui,
+    "Sarchia Makka", "Vazirmatn Variable", "Schibsted Grotesk Variable",
+    system-ui, sans-serif;
+  --font-arabic: "Vazirmatn Variable", "Schibsted Grotesk Variable", system-ui,
     sans-serif;
 
   --radius: 0.875rem;
@@ -128,16 +121,6 @@ textarea {
   --chart-4: #e0624a;
   --chart-5: #a98bd6;
 
-  --cat-beverages: #1e2c3d;
-  --cat-beverages-ink: #9cc0ee;
-  --cat-snacks: #382c15;
-  --cat-snacks-ink: #f1c46f;
-  --cat-dairy: #2b2540;
-  --cat-dairy-ink: #c3b2ef;
-  --cat-bakery: #3a241d;
-  --cat-bakery-ink: #f0a88f;
-  --cat-produce: #1d3221;
-  --cat-produce-ink: #95d6a0;
 
   --sidebar: #0a0f0d;
   --sidebar-foreground: #a9b5ae;
@@ -187,6 +170,7 @@ textarea {
 
   --font-sans: var(--font-sans);
   --font-kurdish: var(--font-kurdish);
+  --font-arabic: var(--font-arabic);
 
   /* controls stay tight, panels round more – radius follows hierarchy */
   --radius-sm: 0.375rem;
@@ -210,9 +194,15 @@ textarea {
     -webkit-font-smoothing: antialiased;
   }
 
-  [dir="rtl"] {
+  /* Font follows the language, not the direction: ku and ar are both RTL */
+  :lang(ku) {
     font-family: var(--font-kurdish);
-    letter-spacing: 0;
+  }
+  :lang(ar) {
+    font-family: var(--font-arabic);
+  }
+  :lang(en) {
+    font-family: var(--font-sans);
   }
   [dir="rtl"] * {
     letter-spacing: 0;

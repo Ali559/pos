@@ -1,369 +1,51 @@
 import { createI18n } from "vue-i18n";
+import en from "./locales/en";
+import ku from "./locales/ku";
+import ar from "./locales/ar";
 
-const messages = {
-  en: {
-    login: {
-      title: "POS System",
-      subtitle: "Sign in to your account",
-      username: "Username",
-      usernamePlaceholder: "Enter your username",
-      password: "Password",
-      passwordPlaceholder: "Enter your password",
-      submit: "Sign In",
-      footer: "Use the account your manager set up for you.",
-    },
-    pos: {
-      scanBarcode: "Scan Barcode",
-      barcodePlaceholder: "Scan or enter barcode",
-      scanHint: "Scan items to add to cart",
-      cartItems: "Cart Items",
-      product: "Product",
-      price: "Price",
-      quantity: "Qty",
-      total: "Total",
-      actions: "Actions",
-      emptyCart: "Scan a barcode or tap a product to start a sale.",
-      orderSummary: "Order Summary",
-      subtotal: "Subtotal",
-      tax: "Tax",
-      charge: "Charge",
-      clearCart: "Clear",
-      allCategories: "All",
-      notFound: "No product has the barcode {code}. Check the number or add it in Inventory.",
-      receipt: "Receipt",
-      items: "No items | 1 item | {n} items",
-      left: "{n} left",
-      outOfStock: "Out of stock",
-      payWith: "Payment method",
-      cash: "Cash",
-      card: "Card",
-      hold: "Hold sale",
-    },
-    categories: {
-      beverages: "Beverages",
-      snacks: "Snacks",
-      dairy: "Dairy",
-      bakery: "Bakery",
-      produce: "Produce",
-    },
-    analytics: {
-      title: "Analytics & Reports",
-      subtitle: "Track business performance",
-      searchPlaceholder: "Search",
+export type Language = "ku" | "ar" | "en";
 
-      tabs: {
-        gen: "General",
-        sales: "Sales",
-        emp: "Employees",
-      },
-      stats: {
-        todaySales: "Today's Sales",
-        transactions: "Transactions",
-        avgTransaction: "Avg Transaction",
-        lowStock: "Low Stock Items",
-        restock: "Need restocking",
-        vsLastWeek: "vs. last week",
-      },
-      charts: {
-        salesOverview: "Sales Overview",
-        topProducts: "Top Products",
-        sold: "Sold",
-        mon: "Mon",
-        tue: "Tue",
-        wed: "Wed",
-        thu: "Thu",
-        fri: "Fri",
-        sat: "Sat",
-        sun: "Sun",
-      },
-      table: {
-        id: "ID",
-        date: "Date",
-        cashier: "Cashier",
-        items: "Items",
-        payment: "Payment",
-        total: "Total",
-        performance: "Employee Performance",
-        employee: "Employee",
-        transactions: "Transactions",
-        totalSales: "Total Sales",
-        avg: "Avg",
-      },
-      range: {
-        today: "Today",
-        week: "This week",
-        month: "This month",
-      },
-    },
-    inventory: {
-      title: "Inventory Management",
-      subtitle: "Manage products and stock",
-      addProduct: "Add Product",
-      searchPlaceholder: "Search products...",
-      allCategories: "All Categories",
-      table: {
-        sku: "SKU",
-        name: "Name",
-        category: "Category",
-        barcode: "Barcode",
-        price: "Price",
-        stock: "Stock",
-        status: "Status",
-        actions: "Actions",
-      },
-      status: {
-        ok: "In stock",
-        low: "Low",
-        out: "Out",
-      },
-      noResults: "No products match your search.",
-      edit: "Edit product",
-      pagination: {
-        showing: "Showing",
-        of: "of",
-        prev: "Prev",
-        next: "Next",
-      },
-    },
-    settings: {
-      title: "Settings",
-      subtitle: "Configure your system",
-      tabs: {
-        general: "General",
-        roles: "Roles",
-        users: "Users",
-      },
-      general: {
-        title: "General Settings",
-        appearance: "Appearance",
-        theme: "Theme",
-        selectTheme: "Select theme",
-        light: "Light",
-        dark: "Dark",
-        system: "System",
-        storeInfo: "Store Info",
-        storeName: "Store Name",
-        storeNamePlaceholder: "Enter store name",
-        taxRate: "Tax Rate",
-      },
-      roles: {
-        title: "Manage Roles",
-        addRole: "Add Role",
-        role: "Role",
-        description: "Description",
-        users: "Users",
-      },
-      users: {
-        title: "Manage Users",
-        addUser: "Add User",
-        name: "Name",
-        username: "Username",
-        role: "Role",
-        status: "Status",
-        active: "Active",
-        inactive: "Inactive",
-      },
-      actions: "Actions",
-      edit: "Edit",
-      delete: "Delete",
-      save: "Save Changes",
-    },
-    sidebar: {
-      pointOfSale: "Point of Sale",
-      inventory: "Inventory",
-      analytics: "Analytics",
-      settings: "Settings",
-      userInfo: {
-        user: "User",
-        role: "Role",
-      },
-      logout: "Logout",
-    },
-  },
-  ku: {
-    login: {
-      title: "سیستەمی POS",
-      subtitle: "بچۆ ناو هەژمارەکەت",
-      username: "ناوی بەکارهێنەر",
-      usernamePlaceholder: "ناوی بەکارهێنەر بنووسە",
-      password: "وشەی تێپەڕ",
-      passwordPlaceholder: "وشەی تێپەڕ بنووسە",
-      submit: "چوونەژوورەوە",
-      footer: "ئەو هەژمارە بەکاربهێنە کە بەڕێوەبەرەکەت بۆی دروستکردوویت.",
-    },
-    pos: {
-      scanBarcode: "سکانی باڕکۆد",
-      barcodePlaceholder: "بارکۆدەکە سکان بکە یان بنووسە",
-      scanHint: "کاڵاکان سکان بکە بۆ زیادکردن",
-      cartItems: "کاڵاکانی ناو سەبەتە",
-      product: "کاڵا",
-      price: "نرخ",
-      quantity: "بڕ",
-      total: "کۆ",
-      actions: "کردارەکان",
-      emptyCart: "بارکۆدێک سکان بکە یان کاڵایەک هەڵبژێرە بۆ دەستپێکردنی فرۆشتن.",
-      orderSummary: "کورتەی داواکاری",
-      subtotal: "کۆی گشتی",
-      tax: "باج",
-      charge: "پارەدان",
-      clearCart: "پاککردنەوە",
-      allCategories: "هەموو",
-      notFound: "هیچ کاڵایەک بارکۆدی {code}ی نییە. ژمارەکە بپشکنە یان لە کۆگا زیادی بکە.",
-      receipt: "پسوولە",
-      items: "هیچ کاڵایەک نییە | ١ کاڵا | {n} کاڵا",
-      left: "{n} ماوە",
-      outOfStock: "نەماوە",
-      payWith: "شێوازی پارەدان",
-      cash: "نەقد",
-      card: "کارت",
-      hold: "ڕاگرتنی فرۆشتن",
-    },
-    categories: {
-      beverages: "خواردنەوە",
-      snacks: "سووکەخۆراک",
-      dairy: "شیرەمەنی",
-      bakery: "نانەوایی",
-      produce: "میوە و سەوزە",
-    },
-    analytics: {
-      title: "ئامار و ڕاپۆرتەکان",
-      subtitle: "چاودێری ئاستی کارەکەت بکە",
-      searchPlaceholder: "گەڕان",
-      tabs: {
-        gen: "گشتی",
-        sales: "فرۆشتنەکان",
-        emp: "کارمەندەکان",
-      },
-      stats: {
-        todaySales: "فرۆشتنی ئەمڕۆ",
-        transactions: "مامەڵەکان",
-        avgTransaction: "تێکڕای مامەڵە",
-        lowStock: "کاڵا کەمبووەکان",
-        restock: "پێویستی بە نوێکردنەوەیە",
-        vsLastWeek: "بەراورد بە هەفتەی ڕابردوو",
-      },
-      charts: {
-        salesOverview: "کورتەی فرۆشتن",
-        topProducts: "پڕفرۆشترین کاڵاکان",
-        sold: "فرۆشرا",
-        mon: "دوو شەم",
-        tue: "سێ شەم",
-        wed: "چوار شەم",
-        thu: "پێنج شەم",
-        fri: "هەینی",
-        sat: "شەممە",
-        sun: "یەک شەم",
-      },
-      table: {
-        id: "ناسنامە",
-        date: "بەروار",
-        cashier: "کاشێر",
-        items: "کاڵاکان",
-        total: "کۆی گشتی",
-        payment: "شێوازی پارەدان",
-        performance: "ئاستی کارمەند",
-        employee: "کارمەند",
-        transactions: "مامەڵەکان",
-        totalSales: "کۆی گشتی فرۆشتنەکان",
-        avg: "تێکڕا",
-      },
-      range: {
-        today: "ئەمڕۆ",
-        week: "ئەم هەفتەیە",
-        month: "ئەم مانگە",
-      },
-    },
-    inventory: {
-      title: "بەڕێوەبردنی کۆگا",
-      subtitle: "بەڕێوەبردنی کاڵاکان و مەخزەن",
-      addProduct: "کاڵا زیاد بکە",
-      searchPlaceholder: "گەڕان بۆ کاڵا...",
-      allCategories: "هەموو جۆرەکان",
-      table: {
-        sku: "کۆد (SKU)",
-        name: "ناو",
-        category: "جۆر",
-        barcode: "بارکۆد",
-        price: "نرخ",
-        stock: "مەخزەن",
-        status: "بارودۆخ",
-        actions: "کردارەکان",
-      },
-      status: {
-        ok: "بەردەستە",
-        low: "کەمە",
-        out: "نەماوە",
-      },
-      noResults: "هیچ کاڵایەک لەگەڵ گەڕانەکەت ناگونجێت.",
-      edit: "دەستکاریکردنی کاڵا",
-      pagination: {
-        showing: "پیشاندانی",
-        of: "لە",
-        prev: "پێشوو",
-        next: "دواتر",
-      },
-    },
-    settings: {
-      title: "ڕێکخستنەکان",
-      subtitle: "سیستەمەکەت ڕێکبخە",
-      tabs: {
-        general: "گشتی",
-        roles: "ڕۆڵەکان",
-        users: "بەکارهێنەران",
-      },
-      general: {
-        title: "ڕێکخستنە گشتییەکان",
-        appearance: "شێوەی پیشاندان",
-        theme: "تێم",
-        selectTheme: "تێمێک هەڵبژێرە",
-        light: "ڕووناک",
-        dark: "تاریک",
-        system: "سیستەم",
-        storeInfo: "زانیاری فرۆشگا",
-        storeName: "ناوی فرۆشگا",
-        storeNamePlaceholder: "ناوی فرۆشگا بنووسە",
-        taxRate: "ڕێژەی باج",
-      },
-      roles: {
-        title: "بەڕێوەبردنی ڕۆڵەکان",
-        addRole: "ڕۆڵ زیاد بکە",
-        role: "ڕۆڵ",
-        description: "وەسف",
-        users: "بەکارهێنەران",
-      },
-      users: {
-        title: "بەڕێوەبردنی بەکارهێنەران",
-        addUser: "بەکارهێنەر زیاد بکە",
-        name: "ناو",
-        username: "ناوی بەکارهێنەر",
-        role: "ڕۆڵ",
-        status: "بارودۆخ",
-        active: "چالاک",
-        inactive: "ناچالاک",
-      },
-      actions: "کردارەکان",
-      edit: "دەستکاری",
-      delete: "سڕینەوە",
-      save: "گۆڕانکارییەکان پاشەکەوت بکە",
-    },
-    sidebar: {
-      pointOfSale: "فرۆشتن",
-      inventory: "کۆگا",
-      analytics: "ئامارەکان",
-      settings: "ڕێکخستن",
-      userInfo: {
-        user: "بەکارهێنەر",
-        role: "ڕۆڵ",
-      },
-      logout: "چونەدەرەوە",
-    },
-  },
+/**
+ * Language is the setting; direction follows from it. `intl` is the locale
+ * passed to Intl formatters (Western digits are forced separately in
+ * src/lib/format.ts).
+ */
+export const languages: Record<
+  Language,
+  { label: string; dir: "ltr" | "rtl"; intl: string }
+> = {
+  ku: { label: "کوردی", dir: "rtl", intl: "ckb-IQ" },
+  ar: { label: "العربية", dir: "rtl", intl: "ar-IQ" },
+  en: { label: "English", dir: "ltr", intl: "en-US" },
 };
+
+export const DEFAULT_LANGUAGE: Language = "ku";
+
+export const isLanguage = (v: unknown): v is Language =>
+  typeof v === "string" && v in languages;
 
 export const i18n = createI18n({
   legacy: false,
-  locale: "en",
-  globalInjection: true,
+  locale: DEFAULT_LANGUAGE,
   fallbackLocale: "en",
-  messages,
+  globalInjection: true,
+  messages: { en, ku, ar },
 });
+
+/**
+ * Picks the column for the current language from a row with per-language
+ * columns. English may be stored as `name` (categories) or `name_en`
+ * (shop_profile); empty translations fall back to English.
+ */
+export const localized = <T extends object>(
+  row: T,
+  field: string,
+  lang: Language = i18n.global.locale.value as Language,
+): string => {
+  const r = row as Record<string, unknown>;
+  for (const key of [`${field}_${lang}`, field, `${field}_en`]) {
+    const v = r[key];
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  return "";
+};

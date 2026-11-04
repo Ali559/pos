@@ -35,9 +35,9 @@ const pine = token("chart-1");
 const sun = token("chart-2");
 
 const stats = computed(() => [
-  { label: t("analytics.stats.todaySales"), value: formatCurrency(1234.56), delta: 12.5 },
+  { label: t("analytics.stats.todaySales"), value: formatCurrency(1845750), delta: 12.5 },
   { label: t("analytics.stats.transactions"), value: "48", delta: 8.3 },
-  { label: t("analytics.stats.avgTransaction"), value: formatCurrency(25.72), delta: -3.2 },
+  { label: t("analytics.stats.avgTransaction"), value: formatCurrency(38450), delta: -3.2 },
 ]);
 
 const salesChartData = computed(() => ({
@@ -47,7 +47,7 @@ const salesChartData = computed(() => ({
   datasets: [
     {
       label: t("analytics.charts.salesOverview"),
-      data: [850, 920, 780, 1100, 1050, 1400, 1234],
+      data: [1275000, 1380000, 1170000, 1650000, 1575000, 2100000, 1845750],
       borderColor: pine,
       backgroundColor: `${pine}1f`,
       borderWidth: 2.5,
@@ -97,15 +97,15 @@ const prodChartOptions = {
 };
 
 const transactions = [
-  { id: "TXN-1041", date: "Nov 4, 2:45 PM", cashier: "Rebin A.", items: 5, total: 45.67, payment: "cash" },
-  { id: "TXN-1040", date: "Nov 4, 2:31 PM", cashier: "Rebin A.", items: 2, total: 3.1, payment: "card" },
-  { id: "TXN-1039", date: "Nov 4, 1:58 PM", cashier: "Shno K.", items: 11, total: 27.4, payment: "cash" },
-  { id: "TXN-1038", date: "Nov 4, 1:12 PM", cashier: "Shno K.", items: 1, total: 0.75, payment: "cash" },
+  { id: "TXN-1041", date: "Nov 4, 2:45 PM", cashier: "Rebin A.", items: 5, total: 68500, payment: "cash" },
+  { id: "TXN-1040", date: "Nov 4, 2:31 PM", cashier: "Rebin A.", items: 2, total: 4750, payment: "card" },
+  { id: "TXN-1039", date: "Nov 4, 1:58 PM", cashier: "Shno K.", items: 11, total: 41250, payment: "cash" },
+  { id: "TXN-1038", date: "Nov 4, 1:12 PM", cashier: "Shno K.", items: 1, total: 750, payment: "cash" },
 ];
 
 const employees = [
-  { name: "Rebin A.", transactions: 32, total: 687.5 },
-  { name: "Shno K.", transactions: 16, total: 547.06 },
+  { name: "Rebin A.", transactions: 32, total: 1031250 },
+  { name: "Shno K.", transactions: 16, total: 820500 },
 ];
 </script>
 

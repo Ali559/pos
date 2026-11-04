@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "pos",
+  "productName": "POS",
   "version": "0.1.0",
   "identifier": "com.macbookshop.pos",
   "build": {
@@ -12,13 +12,21 @@
   "app": {
     "windows": [
       {
-        "title": "pos",
-        "width": 800,
-        "height": 600
+        "title": "POS",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1024,
+        "minHeight": 680
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/media/**"
+        ]
+      }
     }
   },
   "bundle": {
@@ -31,5 +39,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "sql": {
+      "preload": [
+        "sqlite:pos.db"
+      ]
+    }
   }
 }

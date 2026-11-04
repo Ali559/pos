@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { ChevronLeft, ChevronRight, Pencil, Plus, Search } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,35 +17,57 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { categories, products, stockState, type CategoryId } from "@/data/catalog";
+import {
+  countProducts,
+  listCategories,
+  listProducts,
+  stockState,
+  type Category,
+  type Product,
+} from "@/db/catalog";
 import { formatCurrency } from "@/lib/format";
+import { categoryInk } from "@/lib/categoryColor";
+import { localized } from "@/utils/i18n";
+import { watchDebounced } from "@vueuse/core";
 
 const PAGE_SIZE = 10;
 
 const search = ref("");
-const category = ref<CategoryId | "all">("all");
+const category = ref("all");
 const page = ref(0);
+const categories = ref<Category[]>([]);
+const rows = ref<Product[]>([]);
+const total = ref(0);
+const catalogSize = ref<number | null>(null);
 
-const filtered = computed(() => {
-  const q = search.value.trim().toLowerCase();
-  return products.filter(
-    (p) =>
-      (category.value === "all" || p.category === category.value) &&
-      (!q ||
-        p.name.toLowerCase().includes(q) ||
-        p.sku.toLowerCase().includes(q) ||
-        p.barcode.includes(q)),
-  );
+const query = computed(() => ({
+  search: search.value,
+  categoryId: category.value === "all" ? null : Number(category.value),
+}));
+
+const load = async () => {
+  const [list, count] = await Promise.all([
+    listProducts({ ...query.value, limit: PAGE_SIZE, offset: page.value * PAGE_SIZE }),
+    countProducts(query.value),
+  ]);
+  rows.value = list;
+  total.value = count;
+};
+
+watchDebounced([search, category], () => (page.value === 0 ? load() : (page.value = 0)), {
+  debounce: 150,
+});
+watch(page, load);
+
+onMounted(async () => {
+  categories.value = await listCategories();
+  await load();
+  catalogSize.value = await countProducts();
 });
 
-const pageCount = computed(() =>
-  Math.max(1, Math.ceil(filtered.value.length / PAGE_SIZE)),
-);
-const rows = computed(() =>
-  filtered.value.slice(page.value * PAGE_SIZE, (page.value + 1) * PAGE_SIZE),
-);
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)));
 const rangeLabel = computed(() => {
-  if (!filtered.value.length) return "0";
+  if (!total.value) return "0";
   const start = page.value * PAGE_SIZE + 1;
   return `${start}–${start + rows.value.length - 1}`;
 });
@@ -75,17 +97,16 @@ const statusClass = {
           :placeholder="$t('inventory.searchPlaceholder')"
           :aria-label="$t('inventory.searchPlaceholder')"
           class="h-10 w-full rounded-md border border-input bg-card ps-10 pe-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          @input="page = 0"
         />
       </div>
-      <Select v-model="category" :key="$i18n.locale" @update:model-value="page = 0">
+      <Select v-model="category" :key="$i18n.locale">
         <SelectTrigger class="w-48">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">{{ $t("inventory.allCategories") }}</SelectItem>
-          <SelectItem v-for="c in categories" :key="c" :value="c">
-            {{ $t(`categories.${c}`) }}
+          <SelectItem v-for="c in categories" :key="c.id" :value="String(c.id)">
+            {{ localized(c, "name") }}
           </SelectItem>
         </SelectContent>
       </Select>
@@ -113,7 +134,11 @@ const statusClass = {
         <TableBody>
           <TableRow v-if="rows.length === 0" class="hover:bg-transparent">
             <TableCell colspan="7" class="py-14 text-center text-muted-foreground">
-              {{ $t("inventory.noResults") }}
+              {{
+                catalogSize === 0
+                  ? $t("inventory.emptyCatalog")
+                  : $t("inventory.noResults")
+              }}
             </TableCell>
           </TableRow>
           <TableRow v-for="p in rows" :key="p.id">
@@ -121,13 +146,12 @@ const statusClass = {
               <div class="flex items-center gap-3">
                 <span
                   class="size-2.5 shrink-0 rounded-full"
-                  :style="{ background: `var(--cat-${p.category}-ink)` }"
-                  :title="$t(`categories.${p.category}`)"
+                  :style="{ background: categoryInk(p.categoryColor) }"
                 />
                 <div>
                   <div class="font-medium"><bdi>{{ p.name }}</bdi></div>
                   <div class="text-xs text-muted-foreground">
-                    {{ $t(`categories.${p.category}`) }}
+                    {{ localized(p, "categoryName") }}
                   </div>
                 </div>
               </div>
@@ -176,7 +200,7 @@ const statusClass = {
       <div class="flex items-center justify-between border-t px-5 py-3">
         <p class="num text-sm text-muted-foreground">
           {{ $t("inventory.pagination.showing") }} {{ rangeLabel }}
-          {{ $t("inventory.pagination.of") }} {{ filtered.length }}
+          {{ $t("inventory.pagination.of") }} {{ total }}
         </p>
         <div class="flex gap-2">
           <Button
