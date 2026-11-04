@@ -1,104 +1,74 @@
 <script setup lang="ts">
 import {
-  BadgeDollarSign,
-  ChartPie,
-  CirclePile,
+  ChartColumn,
   LogOut,
+  Package,
+  ReceiptText,
+  ScanBarcode,
   Settings,
-  X,
 } from "lucide-vue-next";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
-defineProps<{ isOpen: boolean }>();
-defineEmits<{
-  (e: "close"): void;
-  (e: "logout"): void;
-}>();
 const router = useRouter();
+const route = useRoute();
+
+const items = [
+  { to: "/main/point-of-sale", icon: ScanBarcode, key: "sidebar.pointOfSale" },
+  { to: "/main/inventory", icon: Package, key: "sidebar.inventory" },
+  { to: "/main/analytics", icon: ChartColumn, key: "sidebar.analytics" },
+  { to: "/main/settings", icon: Settings, key: "sidebar.settings" },
+];
 </script>
 
 <template>
-  <Transition name="slide">
+  <nav
+    class="flex h-full w-[88px] shrink-0 flex-col items-center bg-sidebar py-4 text-sidebar-foreground"
+  >
     <div
-      v-if="isOpen"
-      class="fixed inset-y-0 start-0 h-full w-72 bg-sidebar border-r border-sidebar-border z-50 shadow-xl"
+      class="mb-6 grid size-11 place-items-center rounded-lg bg-brand text-brand-foreground"
+      aria-hidden="true"
     >
-      <div class="p-6 border-b border-sidebar-border">
-        <div
-          class="flex justify-between items-center mb-6 rtl:flex-row-reverse"
-        >
-          <h2 class="text-xl font-semibold text-sidebar-foreground">Menu</h2>
-          <button
-            @click="$emit('close')"
-            class="p-2 hover:bg-sidebar-accent rounded-lg transition-colors"
-          >
-            <X class="text-sidebar-foreground" />
-          </button>
-        </div>
-        <nav class="space-y-1">
-          <button
-            @click="router.push('/main/point-of-sale')"
-            class="w-full flex gap-3 rtl:flex-row-reverse px-4 py-3 rounded-lg font-medium items-center text-sidebar-foreground hover:text-sidebar-primary hover:bg-sidebar-accent transition-colors"
-          >
-            <BadgeDollarSign :size="20" /> {{ $t("sidebar.pointOfSale") }}
-          </button>
-          <button
-            @click="router.push('/main/inventory')"
-            class="w-full flex gap-3 rtl:flex-row-reverse px-4 py-3 rounded-lg font-medium items-center text-sidebar-foreground hover:text-sidebar-primary hover:bg-sidebar-accent transition-colors"
-          >
-            <CirclePile :size="20" /> {{ $t("sidebar.inventory") }}
-          </button>
-          <button
-            @click="router.push('/main/analytics')"
-            class="w-full flex gap-3 rtl:flex-row-reverse px-4 py-3 rounded-lg font-medium items-center text-sidebar-foreground hover:text-sidebar-primary hover:bg-sidebar-accent transition-colors"
-          >
-            <ChartPie :size="20" /> {{ $t("sidebar.analytics") }}
-          </button>
-          <button
-            @click="router.push('/main/settings')"
-            class="w-full flex gap-3 rtl:flex-row-reverse px-4 py-3 rounded-lg font-medium items-center text-sidebar-foreground hover:text-sidebar-primary hover:bg-sidebar-accent transition-colors"
-          >
-            <Settings :size="20" /> {{ $t("sidebar.settings") }}
-          </button>
-        </nav>
-      </div>
-      <div
-        class="p-6 border-t border-sidebar-border absolute bottom-0 w-full bg-sidebar"
-      >
-        <div class="text-sm mb-4 text-sidebar-foreground">
-          <div class="font-medium text-left">
-            {{ $t("sidebar.userInfo.user") }}: <span id="userName">Admin</span>
-          </div>
-          <div class="text-muted-foreground text-left">
-            {{ $t("sidebar.userInfo.role") }}:
-            <span id="userRole">Administrator</span>
-          </div>
-        </div>
-        <button
-          @click="$emit('logout')"
-          class="w-full flex items-center rtl:flex-row-reverse gap-2 px-4 py-3 rounded-lg font-medium text-foreground hover:bg-destructive/40 hover:text-destructive hover:border-destructive transition-colors"
-        >
-          <LogOut :size="18" class="rtl:rotate-180" />
-          {{ $t("sidebar.logout") }}
-        </button>
-      </div>
+      <ReceiptText :size="22" />
     </div>
-  </Transition>
+
+    <ul class="flex w-full flex-1 flex-col gap-1 px-2">
+      <li v-for="item in items" :key="item.to">
+        <button
+          type="button"
+          @click="router.push(item.to)"
+          :aria-current="route.path === item.to ? 'page' : undefined"
+          class="group relative flex w-full flex-col items-center gap-1 rounded-lg px-1 py-2.5 text-[11px] leading-tight font-medium transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none aria-[current=page]:bg-sidebar-accent aria-[current=page]:text-sidebar-accent-foreground"
+        >
+          <span
+            class="absolute inset-y-2 -start-2 w-1 rounded-e-full bg-sidebar-primary opacity-0 transition-opacity group-aria-[current=page]:opacity-100"
+          />
+          <component
+            :is="item.icon"
+            :size="22"
+            :stroke-width="1.75"
+            class="group-aria-[current=page]:text-sidebar-primary"
+          />
+          <span class="text-center">{{ $t(item.key) }}</span>
+        </button>
+      </li>
+    </ul>
+
+    <div class="flex flex-col items-center gap-3">
+      <div
+        class="grid size-10 place-items-center rounded-full bg-sidebar-accent text-sm font-semibold text-sidebar-accent-foreground"
+        :title="`${$t('sidebar.userInfo.user')}: Admin`"
+      >
+        AD
+      </div>
+      <button
+        type="button"
+        @click="router.push('/')"
+        :title="$t('sidebar.logout')"
+        :aria-label="$t('sidebar.logout')"
+        class="grid size-10 place-items-center rounded-lg transition-colors hover:bg-destructive/20 hover:text-destructive focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
+      >
+        <LogOut :size="19" class="rtl:rotate-180" />
+      </button>
+    </div>
+  </nav>
 </template>
-
-<style>
-.slide-enter-active,
-.slide-leave-active {
-  transition: transform 0.3s ease;
-}
-
-.slide-enter-from,
-.slide-leave-to {
-  transform: translateX(-100%);
-}
-
-[dir="rtl"] .slide-enter-from,
-[dir="rtl"] .slide-leave-to {
-  transform: translateX(100%);
-}
-</style>

@@ -1,17 +1,8 @@
 <template>
   <div class="p-6">
-    <div class="max-w-7xl mx-auto">
-      <div class="mb-6">
-        <h2 class="text-2xl font-bold text-foreground mb-1">
-          {{ $t("settings.title") }}
-        </h2>
-        <p class="text-muted-foreground">
-          {{ $t("settings.subtitle") }}
-        </p>
-      </div>
-
+    <div class="max-w-5xl mx-auto">
       <Tabs v-model="activeTab" class="w-full">
-        <TabsList class="grid w-full grid-cols-3">
+        <TabsList class="mb-6">
           <TabsTrigger value="general" class="">
             {{ $t("settings.tabs.general") }}
           </TabsTrigger>
@@ -25,7 +16,7 @@
 
         <!-- General Tab -->
         <TabsContent value="general">
-          <Card class="rtl:text-end">
+          <Card>
             <CardHeader>
               <CardTitle class="">
                 {{ $t("settings.general.title") }}
@@ -36,9 +27,9 @@
                 <h3 class="font-semibold">
                   {{ $t("settings.general.appearance") }}
                 </h3>
-                <div class="space-y-2 rtl:ml-auto">
-                  <Select v-model="theme">
-                    <SelectTrigger class="w-full max-w-xs rtl:ml-auto">
+                <div class="space-y-2">
+                  <Select v-model="theme" :key="$i18n.locale">
+                    <SelectTrigger class="w-full max-w-xs">
                       <SelectValue
                         :placeholder="$t('settings.general.selectTheme')"
                       />
@@ -65,7 +56,7 @@
                   {{ $t("settings.general.storeInfo") }}
                 </h3>
                 <div class="grid md:grid-cols-2 gap-4">
-                  <div class="space-y-2 rtl:order-2">
+                  <div class="space-y-2">
                     <Label for="storeName">
                       {{ $t("settings.general.storeName") }}
                     </Label>
@@ -76,7 +67,7 @@
                       class=""
                     />
                   </div>
-                  <div class="space-y-2 rtl:order-1">
+                  <div class="space-y-2">
                     <Label for="taxRate">
                       {{ $t("settings.general.taxRate") }}
                     </Label>
@@ -108,13 +99,13 @@
         <TabsContent value="roles">
           <Card>
             <CardHeader
-              class="flex flex-row items-center justify-between rtl:flex-row-reverse"
+              class="flex flex-row items-center justify-between"
             >
               <CardTitle class="">
                 {{ $t("settings.roles.title") }}
               </CardTitle>
               <Button @click="openRoleModal">
-                <Plus class="me-2 h-4 w-4" />
+                <Plus />
                 {{ $t("settings.roles.addRole") }}
               </Button>
             </CardHeader>
@@ -149,13 +140,18 @@
                     </TableCell>
                     <TableCell class="text-center">
                       <div class="flex justify-center gap-2">
-                        <Button variant="ghost" size="sm">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          :aria-label="$t('settings.edit')"
+                        >
                           <Pencil />
                         </Button>
                         <Button
                           variant="ghost"
-                          size="sm"
-                          class="text-destructive"
+                          size="icon-sm"
+                          class="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          :aria-label="$t('settings.delete')"
                         >
                           <Trash2 />
                         </Button>
@@ -171,12 +167,12 @@
         <!-- Users Tab -->
         <TabsContent value="users">
           <Card>
-            <CardHeader class="flex flex-row items-center justify-between rtl:flex-row-reverse">
+            <CardHeader class="flex flex-row items-center justify-between">
               <CardTitle class="">
                 {{ $t("settings.users.title") }}
               </CardTitle>
               <Button @click="openUserModal">
-                <Plus class="me-2 h-4 w-4" />
+                <Plus />
                 {{ $t("settings.users.addUser") }}
               </Button>
             </CardHeader>
@@ -217,7 +213,12 @@
                     <TableCell class="text-center">
                       <Badge
                         :variant="
-                          user.status === 'active' ? 'default' : 'secondary'
+                          user.status === 'active' ? 'default' : 'outline'
+                        "
+                        :class="
+                          user.status === 'active'
+                            ? 'bg-success/12 text-success'
+                            : 'text-muted-foreground'
                         "
                       >
                         {{
@@ -229,13 +230,18 @@
                     </TableCell>
                     <TableCell class="text-center">
                       <div class="flex justify-center gap-2">
-                        <Button variant="ghost" size="sm">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          :aria-label="$t('settings.edit')"
+                        >
                           <Pencil />
                         </Button>
                         <Button
                           variant="ghost"
-                          size="sm"
-                          class="text-destructive"
+                          size="icon-sm"
+                          class="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          :aria-label="$t('settings.delete')"
                         >
                           <Trash2 />
                         </Button>
@@ -277,9 +283,10 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Pencil, Plus, Trash2 } from "lucide-vue-next";
+import { useTheme } from "@/hooks/useTheme";
 
 const activeTab = ref("general");
-const theme = ref("light");
+const { theme } = useTheme();
 const storeName = ref("My Store");
 const taxRate = ref(10);
 

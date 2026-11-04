@@ -1,22 +1,26 @@
 <script setup lang="ts">
 import Header from "@/components/menus/Header.vue";
 import Sidebar from "@/components/menus/Sidebar.vue";
-import { ref } from "vue";
+import { computed } from "vue";
+import { useI18n } from "vue-i18n";
+import { useRoute } from "vue-router";
 
-const menuOpen = ref<boolean>(false);
+const route = useRoute();
+const { t } = useI18n();
+
+const title = computed(() =>
+  route.meta.titleKey ? t(route.meta.titleKey as string) : "",
+);
 </script>
 
 <template>
-  <Header page-title="" @toggle-menu="menuOpen = !menuOpen" />
-  <!-- Overlay -->
-  <div
-    v-if="menuOpen"
-    class="absolute top-0 h-full w-full bg-gray-100/10 backdrop-blur-sm z-40"
-    @click="menuOpen = false"
-  />
-  <Sidebar :is-open="menuOpen" @close="menuOpen = false" />
-  <main>
-    <slot></slot>
-  </main>
-  <router-view></router-view>
+  <div class="flex h-screen overflow-hidden">
+    <Sidebar />
+    <div class="flex min-w-0 flex-1 flex-col">
+      <Header :page-title="title" />
+      <main class="min-h-0 flex-1 overflow-y-auto">
+        <router-view />
+      </main>
+    </div>
+  </div>
 </template>

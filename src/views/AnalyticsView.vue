@@ -2,344 +2,251 @@
 import Chart from "@/components/data/Chart.vue";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Search } from "lucide-vue-next";
+import { formatCurrency } from "@/lib/format";
 
-// Tab management
-type TabType = "gen" | "sales" | "emp";
-const { t } = useI18n(); // Use the composable
+const { t } = useI18n();
 
-const activeTab = ref<TabType>("gen");
+const activeTab = ref("gen");
+const range = ref("today");
 
-const tabs = computed<
-  {
-    id: TabType;
-    label: string;
-  }[]
->(() => [
-  { id: "gen", label: t("analytics.tabs.gen") },
-  { id: "sales", label: t("analytics.tabs.sales") },
-  { id: "emp", label: t("analytics.tabs.emp") },
+// Chart.js draws to canvas, so it needs resolved colors, not Tailwind classes
+const css = getComputedStyle(document.documentElement);
+const token = (name: string) => css.getPropertyValue(`--${name}`).trim();
+const ink = token("muted-foreground");
+const grid = token("border");
+const pine = token("chart-1");
+const sun = token("chart-2");
+
+const stats = computed(() => [
+  { label: t("analytics.stats.todaySales"), value: formatCurrency(1234.56), delta: 12.5 },
+  { label: t("analytics.stats.transactions"), value: "48", delta: 8.3 },
+  { label: t("analytics.stats.avgTransaction"), value: formatCurrency(25.72), delta: -3.2 },
 ]);
 
-const showAnalTab = (tab: TabType) => {
-  activeTab.value = tab;
-};
-
-// Sales chart data
 const salesChartData = computed(() => ({
-  labels: [
-    t("analytics.charts.mon"),
-    t("analytics.charts.tue"),
-    t("analytics.charts.wed"),
-    t("analytics.charts.thu"),
-    t("analytics.charts.fri"),
-    t("analytics.charts.sat"),
-    t("analytics.charts.sun"),
-  ],
+  labels: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((d) =>
+    t(`analytics.charts.${d}`),
+  ),
   datasets: [
     {
-      label: "Sales",
+      label: t("analytics.charts.salesOverview"),
       data: [850, 920, 780, 1100, 1050, 1400, 1234],
-      borderColor: "oklch(0.6723 0.1606 244.9955)",
-      backgroundColor: "oklch(0.6723 0.1606 244.9955)/0.1",
-      borderWidth: 2,
-      tension: 0.4,
+      borderColor: pine,
+      backgroundColor: `${pine}1f`,
+      borderWidth: 2.5,
+      tension: 0.35,
       fill: true,
+      pointRadius: 0,
+      pointHoverRadius: 5,
+      pointBackgroundColor: sun,
     },
   ],
 }));
 
+const axis = {
+  border: { display: false },
+  ticks: { color: ink, font: { family: "inherit" } },
+};
+
 const salesChartOptions = {
-  plugins: {
-    legend: { display: false },
-    tooltip: {
-      mode: "index" as const,
-      intersect: false,
-    },
-  },
+  interaction: { mode: "index" as const, intersect: false },
+  plugins: { legend: { display: false } },
   scales: {
-    y: {
-      beginAtZero: true,
-      grid: {
-        color: "oklch(0.9317 0.0118 231.6594)",
-      },
-      ticks: {
-        color: "oklch(0.1884 0.0128 248.5103)",
-      },
-    },
-    x: {
-      grid: {
-        color: "oklch(0.9317 0.0118 231.6594)",
-      },
-      ticks: {
-        color: "oklch(0.1884 0.0128 248.5103)",
-      },
-    },
+    y: { ...axis, beginAtZero: true, grid: { color: grid } },
+    x: { ...axis, grid: { display: false } },
   },
 };
 
-// Products chart data
 const prodChartData = computed(() => ({
-  labels: ["Coca Cola", "Milk", "Bread", "Chips"],
+  labels: ["Coca-Cola", "Samoon", "Milk 1L", "Chips"],
   datasets: [
     {
       label: t("analytics.charts.sold"),
       data: [145, 89, 67, 54],
-      backgroundColor: "oklch(0.6723 0.1606 244.9955)",
-      borderColor: "oklch(0.6723 0.1606 244.9955)",
-      borderWidth: 1,
-      borderRadius: 4,
+      backgroundColor: [sun, pine, pine, pine],
+      borderRadius: 6,
+      barThickness: 22,
     },
   ],
 }));
 
 const prodChartOptions = {
-  plugins: {
-    legend: { display: false },
-    tooltip: {
-      callbacks: {
-        label: (context: any) => `${context.dataset.label}: ${context.raw}`,
-      },
-    },
-  },
+  indexAxis: "y" as const,
+  plugins: { legend: { display: false } },
   scales: {
-    y: {
-      beginAtZero: true,
-      grid: {
-        color: "oklch(0.9317 0.0118 231.6594)",
-      },
-      ticks: {
-        color: "oklch(0.1884 0.0128 248.5103)",
-        stepSize: 20,
-      },
-    },
-    x: {
-      grid: {
-        display: false,
-      },
-      ticks: {
-        color: "oklch(0.1884 0.0128 248.5103)",
-      },
-    },
+    x: { ...axis, beginAtZero: true, grid: { color: grid } },
+    y: { ...axis, grid: { display: false } },
   },
 };
+
+const transactions = [
+  { id: "TXN-1041", date: "Nov 4, 2:45 PM", cashier: "Rebin A.", items: 5, total: 45.67, payment: "cash" },
+  { id: "TXN-1040", date: "Nov 4, 2:31 PM", cashier: "Rebin A.", items: 2, total: 3.1, payment: "card" },
+  { id: "TXN-1039", date: "Nov 4, 1:58 PM", cashier: "Shno K.", items: 11, total: 27.4, payment: "cash" },
+  { id: "TXN-1038", date: "Nov 4, 1:12 PM", cashier: "Shno K.", items: 1, total: 0.75, payment: "cash" },
+];
+
+const employees = [
+  { name: "Rebin A.", transactions: 32, total: 687.5 },
+  { name: "Shno K.", transactions: 16, total: 547.06 },
+];
 </script>
 
 <template>
-  <div class="p-6">
-    <div class="max-w-7xl mx-auto">
-      <div class="mb-6">
-        <h2 class="text-2xl font-bold text-foreground mb-1">
-          {{ $t("analytics.title") }}
-        </h2>
-        <p class="text-muted-foreground">{{ $t("analytics.subtitle") }}</p>
-      </div>
+  <div class="mx-auto max-w-7xl p-6">
+    <Tabs v-model="activeTab">
+      <TabsList class="mb-6">
+        <TabsTrigger value="gen">{{ $t("analytics.tabs.gen") }}</TabsTrigger>
+        <TabsTrigger value="sales">{{ $t("analytics.tabs.sales") }}</TabsTrigger>
+        <TabsTrigger value="emp">{{ $t("analytics.tabs.emp") }}</TabsTrigger>
+      </TabsList>
 
-      <!-- Vue 3 Tabs -->
-      <div class="mb-6 border-b border-border">
-        <div class="flex gap-6">
-          <button
-            v-for="tab in tabs"
-            :key="tab.id"
-            @click="showAnalTab(tab.id)"
-            :class="[
-              'px-4 py-3 font-medium transition-colors',
-              activeTab === tab.id
-                ? 'text-primary border-b-2 border-primary'
-                : 'text-muted-foreground hover:text-foreground',
-            ]"
+      <TabsContent value="gen" class="space-y-5">
+        <!-- one strip, not four floating cards: these numbers are read together -->
+        <div class="grid overflow-hidden rounded-xl border bg-card sm:grid-cols-2 lg:grid-cols-4">
+          <div
+            v-for="(s, i) in stats"
+            :key="s.label"
+            class="p-5"
+            :class="i > 0 && 'border-t sm:border-t-0 sm:border-s'"
           >
-            {{ tab.label }}
-          </button>
-        </div>
-      </div>
-
-      <!-- General Tab -->
-      <div v-show="activeTab === 'gen'">
-        <div class="grid md:grid-cols-4 gap-6 mb-6">
-          <div class="bg-card rounded-xl border border-border p-6 shadow-sm">
-            <div class="text-sm text-muted-foreground mb-1">
-              {{ $t("analytics.stats.todaySales") }}
-            </div>
-            <div class="text-3xl font-bold text-foreground">$1,234.56</div>
-            <div class="text-sm text-green-600 mt-2">+12.5%</div>
+            <p class="text-sm text-muted-foreground">{{ s.label }}</p>
+            <p class="mt-1 text-3xl font-semibold tracking-tight">{{ s.value }}</p>
+            <p class="mt-1 text-sm">
+              <span
+                class="font-semibold"
+                :class="s.delta >= 0 ? 'text-success' : 'text-destructive'"
+                >{{ s.delta >= 0 ? "▲" : "▼" }} {{ Math.abs(s.delta) }}%</span
+              >
+              <span class="ms-1 text-muted-foreground">{{
+                $t("analytics.stats.vsLastWeek")
+              }}</span>
+            </p>
           </div>
-          <div class="bg-card rounded-xl border border-border p-6 shadow-sm">
-            <div class="text-sm text-muted-foreground mb-1">
-              {{ $t("analytics.stats.transactions") }}
-            </div>
-            <div class="text-3xl font-bold text-foreground">48</div>
-            <div class="text-sm text-green-600 mt-2">+8.3%</div>
-          </div>
-          <div class="bg-card rounded-xl border border-border p-6 shadow-sm">
-            <div class="text-sm text-muted-foreground mb-1">
-              {{ $t("analytics.stats.avgTransaction") }}
-            </div>
-            <div class="text-3xl font-bold text-foreground">$25.72</div>
-            <div class="text-sm text-destructive mt-2">-3.2%</div>
-          </div>
-          <div class="bg-card rounded-xl border border-border p-6 shadow-sm">
-            <div class="text-sm text-muted-foreground mb-1">
+          <div class="border-t bg-sun/15 p-5 sm:border-s lg:border-t-0">
+            <p class="text-sm text-muted-foreground">
               {{ $t("analytics.stats.lowStock") }}
-            </div>
-            <div class="text-3xl font-bold text-amber-600">7</div>
-            <div class="text-sm text-muted-foreground mt-2">
+            </p>
+            <p class="mt-1 text-3xl font-semibold tracking-tight">7</p>
+            <p class="mt-1 text-sm text-muted-foreground">
               {{ $t("analytics.stats.restock") }}
-            </div>
+            </p>
           </div>
         </div>
 
-        <div class="grid lg:grid-cols-2 gap-6">
-          <div class="bg-card rounded-xl border border-border p-6 shadow-sm">
-            <h3 class="font-semibold text-foreground mb-4">
-              {{ $t("analytics.charts.salesOverview") }}
-            </h3>
-            <div class="h-64 mb-4">
-              <Chart
-                type="line"
-                :data="salesChartData"
-                :options="salesChartOptions"
+        <div class="grid gap-5 lg:grid-cols-5">
+          <section class="rounded-xl border bg-card p-5 lg:col-span-3">
+            <h2 class="mb-4 font-semibold">{{ $t("analytics.charts.salesOverview") }}</h2>
+            <div class="relative h-64">
+              <Chart type="line" :data="salesChartData" :options="salesChartOptions" />
+            </div>
+          </section>
+          <section class="rounded-xl border bg-card p-5 lg:col-span-2">
+            <h2 class="mb-4 font-semibold">{{ $t("analytics.charts.topProducts") }}</h2>
+            <div class="relative h-64">
+              <Chart type="bar" :data="prodChartData" :options="prodChartOptions" />
+            </div>
+          </section>
+        </div>
+      </TabsContent>
+
+      <TabsContent value="sales">
+        <div class="overflow-hidden rounded-xl border bg-card">
+          <div class="flex flex-wrap gap-3 border-b p-4">
+            <Select v-model="range" :key="$i18n.locale">
+              <SelectTrigger class="w-40"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="today">{{ $t("analytics.range.today") }}</SelectItem>
+                <SelectItem value="week">{{ $t("analytics.range.week") }}</SelectItem>
+                <SelectItem value="month">{{ $t("analytics.range.month") }}</SelectItem>
+              </SelectContent>
+            </Select>
+            <div class="relative min-w-56 flex-1">
+              <Search
+                :size="18"
+                class="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
+              <input
+                type="search"
+                :placeholder="$t('analytics.searchPlaceholder')"
+                :aria-label="$t('analytics.searchPlaceholder')"
+                class="h-10 w-full rounded-md border border-input bg-card ps-10 pe-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
               />
             </div>
           </div>
-          <div class="bg-card rounded-xl border border-border p-6 shadow-sm">
-            <h3 class="font-semibold text-foreground mb-4">
-              {{ $t("analytics.charts.topProducts") }}
-            </h3>
-            <div class="h-64 mb-4">
-              <Chart
-                type="bar"
-                :data="prodChartData"
-                :options="prodChartOptions"
-              />
-            </div>
-          </div>
+          <Table>
+            <TableHeader>
+              <TableRow class="hover:bg-transparent">
+                <TableHead class="ps-5">{{ $t("analytics.table.id") }}</TableHead>
+                <TableHead>{{ $t("analytics.table.date") }}</TableHead>
+                <TableHead>{{ $t("analytics.table.cashier") }}</TableHead>
+                <TableHead class="text-end">{{ $t("analytics.table.items") }}</TableHead>
+                <TableHead>{{ $t("analytics.table.payment") }}</TableHead>
+                <TableHead class="pe-5 text-end">{{ $t("analytics.table.total") }}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="tx in transactions" :key="tx.id">
+                <TableCell class="num ps-5 text-muted-foreground">#{{ tx.id }}</TableCell>
+                <TableCell class="num">{{ tx.date }}</TableCell>
+                <TableCell>{{ tx.cashier }}</TableCell>
+                <TableCell class="num text-end">{{ tx.items }}</TableCell>
+                <TableCell>{{ $t(`pos.${tx.payment}`) }}</TableCell>
+                <TableCell class="num pe-5 text-end font-semibold">{{
+                  formatCurrency(tx.total)
+                }}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
         </div>
-      </div>
+      </TabsContent>
 
-      <!-- Sales Tab -->
-      <div v-show="activeTab === 'sales'" class="space-y-6">
-        <div
-          class="bg-card rounded-xl border border-border overflow-hidden shadow-sm"
-        >
-          <div class="p-6 border-b border-border flex gap-4">
-            <select
-              class="px-4 py-2 bg-background border border-input rounded-lg text-foreground"
-            >
-              <option>Today</option>
-              <option>This Week</option>
-              <option>This Month</option>
-            </select>
-            <input
-              type="text"
-              :placeholder="$t('analytics.searchPlaceholder')"
-              class="flex-1 px-4 py-2 bg-background border border-input rounded-lg text-foreground placeholder:text-muted-foreground"
-            />
-          </div>
-          <table class="w-full">
-            <thead class="bg-muted border-b border-border">
-              <tr>
-                <th
-                  class="px-6 py-3 ltr:text-left text-xs font-medium uppercase text-muted-foreground"
-                >
-                  {{ $t("analytics.table.id") }}
-                </th>
-                <th
-                  class="px-6 py-3 ltr:text-left text-xs font-medium uppercase text-muted-foreground"
-                >
-                  {{ $t("analytics.table.date") }}
-                </th>
-                <th
-                  class="px-6 py-3 ltr:text-left text-xs font-medium uppercase text-muted-foreground"
-                >
-                  {{ $t("analytics.table.cashier") }}
-                </th>
-                <th
-                  class="px-6 py-3 ltr:text-right text-xs font-medium uppercase text-muted-foreground"
-                >
-                  {{ $t("analytics.table.items") }}
-                </th>
-                <th
-                  class="px-6 py-3 ltr:text-right text-xs font-medium uppercase text-muted-foreground"
-                >
-                  {{ $t("analytics.table.total") }}
-                </th>
-                <th
-                  class="px-6 py-3 ltr:text-left text-xs font-medium uppercase text-muted-foreground"
-                >
-                  {{ $t("analytics.table.payment") }}
-                </th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-border">
-              <tr class="hover:bg-accent/50">
-                <td class="px-6 py-4 font-mono text-sm text-foreground">
-                  #TXN-001
-                </td>
-                <td class="px-6 py-4 text-sm text-foreground">
-                  Feb 5, 2:45 PM
-                </td>
-                <td class="px-6 py-4 text-sm text-foreground">John Doe</td>
-                <td class="px-6 py-4 ltr:text-right text-foreground">5</td>
-                <td class="px-6 py-4 ltr:text-right font-semibold text-primary">
-                  $45.67
-                </td>
-                <td class="px-6 py-4 text-sm text-foreground">Cash</td>
-              </tr>
-            </tbody>
-          </table>
+      <TabsContent value="emp">
+        <div class="overflow-hidden rounded-xl border bg-card">
+          <h2 class="border-b px-5 py-4 font-semibold">
+            {{ $t("analytics.table.performance") }}
+          </h2>
+          <Table>
+            <TableHeader>
+              <TableRow class="hover:bg-transparent">
+                <TableHead class="ps-5">{{ $t("analytics.table.employee") }}</TableHead>
+                <TableHead class="text-end">{{ $t("analytics.table.transactions") }}</TableHead>
+                <TableHead class="text-end">{{ $t("analytics.table.totalSales") }}</TableHead>
+                <TableHead class="pe-5 text-end">{{ $t("analytics.table.avg") }}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="e in employees" :key="e.name">
+                <TableCell class="ps-5 font-medium">{{ e.name }}</TableCell>
+                <TableCell class="num text-end">{{ e.transactions }}</TableCell>
+                <TableCell class="num text-end font-semibold">{{
+                  formatCurrency(e.total)
+                }}</TableCell>
+                <TableCell class="num pe-5 text-end">{{
+                  formatCurrency(e.total / e.transactions)
+                }}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
         </div>
-      </div>
-
-      <!-- Employees Tab -->
-      <div v-show="activeTab === 'emp'" class="space-y-6">
-        <div
-          class="bg-card rounded-xl border border-border overflow-hidden shadow-sm"
-        >
-          <div class="p-6 border-b border-border">
-            <h3 class="font-semibold text-foreground">
-              {{ $t("analytics.table.performance") }}
-            </h3>
-          </div>
-          <table class="w-full">
-            <thead class="bg-muted border-b border-border">
-              <tr>
-                <th
-                  class="px-6 py-3 ltr:text-left text-xs font-medium uppercase text-muted-foreground"
-                >
-                  {{ $t("analytics.table.employee") }}
-                </th>
-                <th
-                  class="px-6 py-3 ltr:text-right text-xs font-medium uppercase text-muted-foreground"
-                >
-                  {{ $t("analytics.table.transactions") }}
-                </th>
-                <th
-                  class="px-6 py-3 ltr:text-right text-xs font-medium uppercase text-muted-foreground"
-                >
-                  {{ $t("analytics.table.totalSales") }}
-                </th>
-                <th
-                  class="px-6 py-3 ltr:text-right text-xs font-medium uppercase text-muted-foreground"
-                >
-                  {{ $t("analytics.table.avg") }}
-                </th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-border">
-              <tr class="hover:bg-accent/50">
-                <td class="px-6 py-4 font-medium text-foreground">John Doe</td>
-                <td class="px-6 py-4 ltr:text-right text-foreground">32</td>
-                <td
-                  class="px-6 py-4 ltr:text-right font-semibold text-green-600"
-                >
-                  $687.50
-                </td>
-                <td class="px-6 py-4 ltr:text-right text-foreground">$21.48</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+      </TabsContent>
+    </Tabs>
   </div>
 </template>

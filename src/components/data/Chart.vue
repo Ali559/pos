@@ -12,6 +12,7 @@ import {
   Title,
   Tooltip,
   Legend,
+  Filler,
   type ChartConfiguration,
   type ChartType,
   type ChartData,
@@ -29,6 +30,7 @@ Chart.register(
   Title,
   Tooltip,
   Legend,
+  Filler,
 );
 
 const props = defineProps<{

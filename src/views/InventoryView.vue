@@ -1,111 +1,202 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight } from "lucide-vue-next";
+import { computed, ref } from "vue";
+import { ChevronLeft, ChevronRight, Pencil, Plus, Search } from "lucide-vue-next";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { categories, products, stockState, type CategoryId } from "@/data/catalog";
+import { formatCurrency } from "@/lib/format";
+
+const PAGE_SIZE = 10;
+
+const search = ref("");
+const category = ref<CategoryId | "all">("all");
+const page = ref(0);
+
+const filtered = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  return products.filter(
+    (p) =>
+      (category.value === "all" || p.category === category.value) &&
+      (!q ||
+        p.name.toLowerCase().includes(q) ||
+        p.sku.toLowerCase().includes(q) ||
+        p.barcode.includes(q)),
+  );
+});
+
+const pageCount = computed(() =>
+  Math.max(1, Math.ceil(filtered.value.length / PAGE_SIZE)),
+);
+const rows = computed(() =>
+  filtered.value.slice(page.value * PAGE_SIZE, (page.value + 1) * PAGE_SIZE),
+);
+const rangeLabel = computed(() => {
+  if (!filtered.value.length) return "0";
+  const start = page.value * PAGE_SIZE + 1;
+  return `${start}–${start + rows.value.length - 1}`;
+});
+
+// Fill of the stock bar: full at 4× the reorder level
+const stockFill = (stock: number, min: number) =>
+  `${Math.min(100, (stock / Math.max(1, min * 4)) * 100)}%`;
+
+const statusClass = {
+  ok: "bg-success/12 text-success",
+  low: "bg-warning/15 text-warning",
+  out: "bg-destructive/12 text-destructive",
+};
 </script>
 
 <template>
-  <div class="p-6">
-    <div class="max-w-7xl mx-auto">
-      <div class="mb-6 flex justify-between items-center">
-        <div>
-          <h2 class="text-2xl font-bold text-foreground mb-1">
-            {{ $t("inventory.title") }}
-          </h2>
-          <p class="text-muted-foreground">{{ $t("inventory.subtitle") }}</p>
-        </div>
-        <button
-          onclick="openModal('product')"
-          class="bg-primary hover:bg-primary/90 text-primary-foreground py-2 px-6 rounded-lg shadow-sm transition-colors"
-        >
-          + {{ $t("inventory.addProduct") }}
-        </button>
+  <div class="mx-auto max-w-7xl p-6">
+    <div class="mb-5 flex flex-wrap items-center gap-3">
+      <div class="relative min-w-64 flex-1">
+        <Search
+          :size="18"
+          class="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+        />
+        <input
+          v-model="search"
+          type="search"
+          :placeholder="$t('inventory.searchPlaceholder')"
+          :aria-label="$t('inventory.searchPlaceholder')"
+          class="h-10 w-full rounded-md border border-input bg-card ps-10 pe-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          @input="page = 0"
+        />
       </div>
-      <div
-        class="bg-card rounded-xl border border-border overflow-hidden shadow-sm"
-      >
-        <div class="p-6 border-b border-border flex gap-4">
-          <input
-            type="text"
-            id="searchInv"
-            :placeholder="$t('inventory.searchPlaceholder')"
-            class="flex-1 px-4 py-2 bg-background border border-input rounded-lg text-foreground placeholder:text-muted-foreground"
-          />
-          <select
-            class="px-4 py-2 bg-background border border-input rounded-lg text-foreground"
-          >
-            <option>{{ $t("inventory.allCategories") }}</option>
-            <option>Beverages</option>
-            <option>Snacks</option>
-            <option>Dairy</option>
-          </select>
-        </div>
-        <table class="w-full">
-          <thead class="bg-muted border-b border-border">
-            <tr>
-              <th
-                class="px-6 py-3 text-left text-xs font-medium uppercase text-muted-foreground"
-              >
-                {{ $t("inventory.table.sku") }}
-              </th>
-              <th
-                class="px-6 py-3 text-left text-xs font-medium uppercase text-muted-foreground"
-              >
-                {{ $t("inventory.table.name") }}
-              </th>
-              <th
-                class="px-6 py-3 text-left text-xs font-medium uppercase text-muted-foreground"
-              >
-                {{ $t("inventory.table.category") }}
-              </th>
-              <th
-                class="px-6 py-3 text-left text-xs font-medium uppercase text-muted-foreground"
-              >
-                {{ $t("inventory.table.barcode") }}
-              </th>
-              <th
-                class="px-6 py-3 text-right text-xs font-medium uppercase text-muted-foreground"
-              >
-                {{ $t("inventory.table.price") }}
-              </th>
-              <th
-                class="px-6 py-3 text-right text-xs font-medium uppercase text-muted-foreground"
-              >
-                {{ $t("inventory.table.stock") }}
-              </th>
-              <th
-                class="px-6 py-3 text-center text-xs font-medium uppercase text-muted-foreground"
-              >
-                {{ $t("inventory.table.status") }}
-              </th>
-              <th
-                class="px-6 py-3 text-center text-xs font-medium uppercase text-muted-foreground"
-              >
-                {{ $t("inventory.table.actions") }}
-              </th>
-            </tr>
-          </thead>
-          <tbody id="invBody" class="divide-y divide-border"></tbody>
-        </table>
-        <div class="px-6 py-4 border-t border-border flex justify-between">
-          <div class="text-sm text-muted-foreground">
-            {{ $t("inventory.pagination.showing") }}
-            <span id="showing">1-10</span> {{ $t("inventory.pagination.of") }}
+      <Select v-model="category" :key="$i18n.locale" @update:model-value="page = 0">
+        <SelectTrigger class="w-48">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">{{ $t("inventory.allCategories") }}</SelectItem>
+          <SelectItem v-for="c in categories" :key="c" :value="c">
+            {{ $t(`categories.${c}`) }}
+          </SelectItem>
+        </SelectContent>
+      </Select>
+      <Button size="lg" class="ms-auto">
+        <Plus />
+        {{ $t("inventory.addProduct") }}
+      </Button>
+    </div>
 
-            <span id="totalProd">50</span>
-          </div>
-          <div class="flex gap-2 rtl:flex-row-reverse">
-            <button
-              class="px-3 py-1 flex items-center gap-2 bg-background border border-input rounded hover:bg-accent text-foreground transition-colors rtl:flex-row-reverse"
+    <div class="overflow-hidden rounded-xl border bg-card">
+      <Table>
+        <TableHeader>
+          <TableRow class="hover:bg-transparent">
+            <TableHead class="ps-5">{{ $t("inventory.table.name") }}</TableHead>
+            <TableHead>{{ $t("inventory.table.sku") }}</TableHead>
+            <TableHead>{{ $t("inventory.table.barcode") }}</TableHead>
+            <TableHead class="text-end">{{ $t("inventory.table.price") }}</TableHead>
+            <TableHead class="w-48">{{ $t("inventory.table.stock") }}</TableHead>
+            <TableHead>{{ $t("inventory.table.status") }}</TableHead>
+            <TableHead class="w-14 pe-5"
+              ><span class="sr-only">{{ $t("inventory.table.actions") }}</span></TableHead
             >
-              {{ $t("inventory.pagination.prev") }}
-              <ChevronLeft />
-            </button>
-            <button
-              class="px-3 flex items-center gap-2 py-1 bg-background border border-input rounded hover:bg-accent text-foreground transition-colors rtl:flex-row-reverse"
-            >
-              {{ $t("inventory.pagination.next") }}
-              <ChevronRight />
-            </button>
-          </div>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <TableRow v-if="rows.length === 0" class="hover:bg-transparent">
+            <TableCell colspan="7" class="py-14 text-center text-muted-foreground">
+              {{ $t("inventory.noResults") }}
+            </TableCell>
+          </TableRow>
+          <TableRow v-for="p in rows" :key="p.id">
+            <TableCell class="ps-5">
+              <div class="flex items-center gap-3">
+                <span
+                  class="size-2.5 shrink-0 rounded-full"
+                  :style="{ background: `var(--cat-${p.category}-ink)` }"
+                  :title="$t(`categories.${p.category}`)"
+                />
+                <div>
+                  <div class="font-medium"><bdi>{{ p.name }}</bdi></div>
+                  <div class="text-xs text-muted-foreground">
+                    {{ $t(`categories.${p.category}`) }}
+                  </div>
+                </div>
+              </div>
+            </TableCell>
+            <TableCell class="num text-muted-foreground">{{ p.sku }}</TableCell>
+            <TableCell class="num text-muted-foreground">{{ p.barcode }}</TableCell>
+            <TableCell class="num text-end font-medium">{{
+              formatCurrency(p.price)
+            }}</TableCell>
+            <TableCell>
+              <div class="flex items-center gap-3">
+                <span class="num w-8 text-end font-medium">{{ p.stock }}</span>
+                <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                  <div
+                    class="h-full rounded-full"
+                    :class="{
+                      'bg-primary': stockState(p) === 'ok',
+                      'bg-warning': stockState(p) === 'low',
+                    }"
+                    :style="{ width: stockFill(p.stock, p.minStock) }"
+                  />
+                </div>
+              </div>
+            </TableCell>
+            <TableCell>
+              <span
+                class="inline-flex h-6 items-center rounded-md px-2 text-xs font-semibold"
+                :class="statusClass[stockState(p)]"
+              >
+                {{ $t(`inventory.status.${stockState(p)}`) }}
+              </span>
+            </TableCell>
+            <TableCell class="pe-5">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('inventory.edit')"
+              >
+                <Pencil />
+              </Button>
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
+
+      <div class="flex items-center justify-between border-t px-5 py-3">
+        <p class="num text-sm text-muted-foreground">
+          {{ $t("inventory.pagination.showing") }} {{ rangeLabel }}
+          {{ $t("inventory.pagination.of") }} {{ filtered.length }}
+        </p>
+        <div class="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            :disabled="page === 0"
+            @click="page--"
+          >
+            <ChevronLeft class="rtl:rotate-180" />
+            {{ $t("inventory.pagination.prev") }}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            :disabled="page >= pageCount - 1"
+            @click="page++"
+          >
+            {{ $t("inventory.pagination.next") }}
+            <ChevronRight class="rtl:rotate-180" />
+          </Button>
         </div>
       </div>
     </div>

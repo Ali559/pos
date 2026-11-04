@@ -1,281 +1,395 @@
-<!-- PointOfSale.vue -->
-<template>
-  <div class="p-6">
-    <div class="grid lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
-      <!-- Left Column -->
-      <div class="lg:col-span-2 space-y-6">
-        <!-- Barcode Scanner Card -->
-        <Card>
-          <CardHeader>
-            <CardTitle class="text-start">
-              {{ $t("pos.scanBarcode") }}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div class="space-y-4">
-              <div class="relative">
-                <Input
-                  v-model="barcode"
-                  type="text"
-                  :placeholder="$t('pos.barcodePlaceholder')"
-                  class="w-full text-lg ps-12 text-start font-mono"
-                  @keydown.enter="addItemByBarcode"
-                />
-                <div class="absolute start-3 top-1/2 -translate-y-1/2">
-                  <svg
-                    class="w-5 h-5 text-muted-foreground"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-                    />
-                  </svg>
-                </div>
-              </div>
-              <p class="text-sm text-muted-foreground text-start">
-                💡 {{ $t("pos.scanHint") }}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <!-- Cart Items Card -->
-        <Card>
-          <CardHeader>
-            <CardTitle class="text-start">
-              {{ $t("pos.cartItems") }}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead class="text-start w-75">
-                    {{ $t("pos.product") }}
-                  </TableHead>
-                  <TableHead class="text-end">
-                    {{ $t("pos.price") }}
-                  </TableHead>
-                  <TableHead class="text-center">
-                    {{ $t("pos.quantity") }}
-                  </TableHead>
-                  <TableHead class="text-end">
-                    {{ $t("pos.total") }}
-                  </TableHead>
-                  <TableHead class="text-center">
-                    {{ $t("pos.actions") }}
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow v-if="cartItems.length === 0">
-                  <TableCell
-                    colspan="5"
-                    class="text-center text-muted-foreground py-12"
-                  >
-                    {{ $t("pos.emptyCart") }}
-                  </TableCell>
-                </TableRow>
-                <TableRow v-for="item in cartItems" :key="item.id">
-                  <TableCell class="text-start font-medium">
-                    {{ item.name }}
-                  </TableCell>
-                  <TableCell class="text-end">
-                    {{ formatCurrency(item.price) }}
-                  </TableCell>
-                  <TableCell class="text-center">
-                    <div class="flex items-center justify-center gap-2">
-                      <Button
-                        @click="decrementQuantity(item.id)"
-                        variant="outline"
-                        size="icon"
-                        class="h-8 w-8"
-                      >
-                        <Minus class="h-4 w-4" />
-                      </Button>
-                      <span class="w-8 text-center">{{ item.quantity }}</span>
-                      <Button
-                        @click="incrementQuantity(item.id)"
-                        variant="outline"
-                        size="icon"
-                        class="h-8 w-8"
-                      >
-                        <Plus class="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                  <TableCell class="text-end font-medium">
-                    {{ formatCurrency(item.price * item.quantity) }}
-                  </TableCell>
-                  <TableCell class="text-center">
-                    <Button
-                      @click="removeFromCart(item.id)"
-                      variant="ghost"
-                      size="icon"
-                      class="text-destructive hover:text-destructive/90"
-                    >
-                      <Trash2 class="h-4 w-4" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      </div>
-
-      <!-- Right Column -->
-      <div class="space-y-6">
-        <!-- Order Summary Card -->
-        <Card>
-          <CardHeader>
-            <CardTitle class="text-start">
-              {{ $t("pos.orderSummary") }}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div class="space-y-3">
-              <div class="flex justify-between text-sm">
-                <span class="text-muted-foreground">{{
-                  $t("pos.subtotal")
-                }}</span>
-                <span>{{ formatCurrency(subtotal) }}</span>
-              </div>
-              <div class="flex justify-between text-sm">
-                <span class="text-muted-foreground"
-                  >{{ $t("pos.tax") }} (10%)</span
-                >
-                <span>{{ formatCurrency(tax) }}</span>
-              </div>
-              <Separator />
-              <div class="flex justify-between items-baseline">
-                <span class="font-medium">{{ $t("pos.total") }}</span>
-                <span class="text-2xl font-bold text-primary">
-                  {{ formatCurrency(total) }}
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <!-- Action Buttons -->
-        <Button
-          @click="checkout"
-          :disabled="cartItems.length === 0"
-          class="w-full"
-          size="lg"
-        >
-          {{ $t("pos.charge") }} {{ formatCurrency(total) }}
-        </Button>
-
-        <Button
-          @click="clearCart"
-          variant="outline"
-          class="w-full"
-          :disabled="cartItems.length === 0"
-        >
-          {{ $t("pos.clearCart") }}
-        </Button>
-      </div>
-    </div>
-  </div>
-</template>
-
 <script setup lang="ts">
-import { ref, computed } from "vue";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { computed, nextTick, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Separator } from "@/components/ui/separator";
-import { Plus, Minus, Trash2 } from "lucide-vue-next";
+  Banknote,
+  CreditCard,
+  Minus,
+  PauseCircle,
+  Plus,
+  ScanBarcode,
+  Trash2,
+  X,
+} from "lucide-vue-next";
+import {
+  categories,
+  products,
+  stockState,
+  type CategoryId,
+  type Product,
+} from "@/data/catalog";
+import { formatCurrency } from "@/lib/format";
 
-// Types
 interface CartItem {
-  id: string;
+  id: number;
   name: string;
   price: number;
   quantity: number;
 }
 
+const { t } = useI18n();
+
+const TAX_RATE = 0.1;
+
 // State
 const barcode = ref("");
+const scanInput = ref<HTMLInputElement | null>(null);
+const scanError = ref("");
+const activeCategory = ref<CategoryId | "all">("all");
+const payment = ref<"cash" | "card">("cash");
+const lastAdded = ref<number | null>(null);
+const receiptNo = ref(1042);
 const cartItems = ref<CartItem[]>([
-  { id: "1", name: "Coca Cola", price: 2.5, quantity: 2 },
-  { id: "2", name: "Potato Chips", price: 3.0, quantity: 1 },
+  { id: 1, name: "Coca-Cola 330ml", price: 0.75, quantity: 2 },
+  { id: 5, name: "Potato chips salted", price: 1.0, quantity: 1 },
+  { id: 11, name: "Samoon bread (5)", price: 0.5, quantity: 1 },
 ]);
 
 // Computed
-const subtotal = computed(() => {
-  return cartItems.value.reduce(
-    (sum, item) => sum + item.price * item.quantity,
-    0,
-  );
-});
+const visibleProducts = computed(() =>
+  activeCategory.value === "all"
+    ? products
+    : products.filter((p) => p.category === activeCategory.value),
+);
 
-const tax = computed(() => subtotal.value * 0.1);
+const qtyInCart = (id: number) =>
+  cartItems.value.find((i) => i.id === id)?.quantity ?? 0;
+
+const itemCount = computed(() =>
+  cartItems.value.reduce((n, i) => n + i.quantity, 0),
+);
+const subtotal = computed(() =>
+  cartItems.value.reduce((sum, i) => sum + i.price * i.quantity, 0),
+);
+const tax = computed(() => subtotal.value * TAX_RATE);
 const total = computed(() => subtotal.value + tax.value);
 
 // Methods
-const formatCurrency = (amount: number) => {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(amount);
+const focusScan = () => nextTick(() => scanInput.value?.focus());
+
+const addProduct = (p: Product) => {
+  if (stockState(p) === "out") return;
+  const existing = cartItems.value.find((i) => i.id === p.id);
+  if (existing) existing.quantity++;
+  else
+    cartItems.value.push({ id: p.id, name: p.name, price: p.price, quantity: 1 });
+  lastAdded.value = p.id;
+  setTimeout(() => {
+    if (lastAdded.value === p.id) lastAdded.value = null;
+  }, 600);
 };
 
 const addItemByBarcode = () => {
-  if (!barcode.value.trim()) return;
-
-  // Simulate adding item
-  const newItem: CartItem = {
-    id: Date.now().toString(),
-    name: `Product ${barcode.value}`,
-    price: 5.99,
-    quantity: 1,
-  };
-
-  cartItems.value.push(newItem);
+  const code = barcode.value.trim();
+  if (!code) return;
+  const product = products.find((p) => p.barcode === code || p.sku === code);
+  if (!product) {
+    scanError.value = t("pos.notFound", { code });
+    return;
+  }
+  scanError.value = "";
+  addProduct(product);
   barcode.value = "";
 };
 
-const incrementQuantity = (id: string) => {
-  const item = cartItems.value.find((item) => item.id === id);
+const incrementQuantity = (id: number) => {
+  const item = cartItems.value.find((i) => i.id === id);
   if (item) item.quantity++;
 };
 
-const decrementQuantity = (id: string) => {
-  const item = cartItems.value.find((item) => item.id === id);
-  if (item && item.quantity > 1) {
-    item.quantity--;
-  } else {
-    removeFromCart(id);
-  }
+const decrementQuantity = (id: number) => {
+  const item = cartItems.value.find((i) => i.id === id);
+  if (item && item.quantity > 1) item.quantity--;
+  else removeFromCart(id);
 };
 
-const removeFromCart = (id: string) => {
-  cartItems.value = cartItems.value.filter((item) => item.id !== id);
+const removeFromCart = (id: number) => {
+  cartItems.value = cartItems.value.filter((i) => i.id !== id);
 };
 
 const clearCart = () => {
   cartItems.value = [];
+  focusScan();
 };
 
 const checkout = () => {
   // Implement checkout logic
-  console.log("Checking out:", cartItems.value);
+  console.log("Charging", payment.value, total.value, cartItems.value);
+  receiptNo.value++;
   clearCart();
 };
+
+onMounted(focusScan);
 </script>
+
+<template>
+  <div class="flex h-full min-h-0">
+    <!-- Catalogue side -->
+    <section class="flex min-w-0 flex-1 flex-col gap-5 overflow-y-auto p-6">
+      <form @submit.prevent="addItemByBarcode">
+        <label for="scan" class="sr-only">{{ $t("pos.scanBarcode") }}</label>
+        <div
+          class="flex h-16 items-center gap-3 rounded-xl border-2 bg-card px-5 transition-colors"
+          :class="
+            scanError
+              ? 'border-destructive'
+              : 'border-input focus-within:border-primary'
+          "
+        >
+          <ScanBarcode
+            :size="26"
+            :stroke-width="1.75"
+            class="shrink-0 text-primary"
+          />
+          <input
+            id="scan"
+            ref="scanInput"
+            v-model="barcode"
+            type="text"
+            inputmode="numeric"
+            autocomplete="off"
+            :placeholder="$t('pos.barcodePlaceholder')"
+            class="num h-full min-w-0 flex-1 bg-transparent text-xl tracking-wide outline-none placeholder:text-base placeholder:tracking-normal placeholder:text-muted-foreground"
+            @input="scanError = ''"
+          />
+          <kbd
+            class="hidden rounded border bg-muted px-2 py-0.5 text-xs text-muted-foreground sm:block"
+            >Enter</kbd
+          >
+        </div>
+        <p
+          v-if="scanError"
+          role="alert"
+          class="mt-2 text-sm font-medium text-destructive"
+        >
+          {{ scanError }}
+        </p>
+      </form>
+
+      <div class="flex flex-wrap gap-2" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="activeCategory === 'all'"
+          @click="activeCategory = 'all'"
+          class="h-9 rounded-full border px-4 text-sm font-medium transition-colors hover:border-foreground/30 aria-selected:border-foreground aria-selected:bg-foreground aria-selected:text-background"
+        >
+          {{ $t("pos.allCategories") }}
+        </button>
+        <button
+          v-for="c in categories"
+          :key="c"
+          type="button"
+          role="tab"
+          :aria-selected="activeCategory === c"
+          @click="activeCategory = c"
+          class="flex h-9 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors hover:border-foreground/30 aria-selected:border-foreground aria-selected:bg-foreground aria-selected:text-background"
+        >
+          <span
+            class="size-2.5 rounded-full"
+            :style="{ background: `var(--cat-${c}-ink)` }"
+          />
+          {{ $t(`categories.${c}`) }}
+        </button>
+      </div>
+
+      <ul
+        class="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3"
+      >
+        <li v-for="p in visibleProducts" :key="p.id">
+          <button
+            type="button"
+            @click="addProduct(p)"
+            :disabled="stockState(p) === 'out'"
+            class="relative flex h-32 w-full flex-col rounded-xl p-3.5 text-start transition-[transform,box-shadow] hover:ring-2 hover:ring-foreground/15 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+            :style="{
+              background: `var(--cat-${p.category})`,
+              color: `var(--cat-${p.category}-ink)`,
+            }"
+          >
+            <span
+              v-if="qtyInCart(p.id)"
+              class="num absolute end-2.5 top-2.5 grid h-6 min-w-6 place-items-center rounded-full bg-foreground px-1.5 text-xs font-semibold text-background"
+              >{{ qtyInCart(p.id) }}</span
+            >
+            <span
+              class="line-clamp-2 pe-7 text-[15px] leading-snug font-semibold text-foreground"
+              ><bdi>{{ p.name }}</bdi></span
+            >
+            <span class="mt-auto flex items-end justify-between gap-2">
+              <span class="text-lg font-semibold text-foreground">{{
+                formatCurrency(p.price)
+              }}</span>
+              <span
+                class="text-xs font-medium"
+                :class="{
+                  'text-destructive': stockState(p) !== 'ok',
+                }"
+              >
+                <template v-if="stockState(p) === 'out'">{{
+                  $t("pos.outOfStock")
+                }}</template>
+                <template v-else>{{
+                  $t("pos.left", { n: p.stock })
+                }}</template>
+              </span>
+            </span>
+          </button>
+        </li>
+      </ul>
+    </section>
+
+    <!-- Receipt side -->
+    <aside
+      class="flex w-[380px] shrink-0 flex-col gap-4 border-s bg-secondary p-5"
+    >
+      <div
+        class="receipt-edge flex min-h-0 flex-1 flex-col bg-card pb-6 shadow-[0_1px_2px_rgb(0_0_0/0.06)]"
+      >
+        <header class="px-5 pt-5 pb-3">
+          <div class="flex items-baseline justify-between">
+            <h2 class="text-base font-semibold">{{ $t("pos.receipt") }}</h2>
+            <span class="text-sm text-muted-foreground"
+              >#{{ receiptNo }}</span
+            >
+          </div>
+          <p class="text-sm text-muted-foreground">
+            {{ $t("pos.items", itemCount) }}
+          </p>
+        </header>
+        <div class="rule-dashed mx-5" />
+
+        <ol class="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+          <li
+            v-if="cartItems.length === 0"
+            class="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground"
+          >
+            {{ $t("pos.emptyCart") }}
+          </li>
+          <li
+            v-for="item in cartItems"
+            :key="item.id"
+            class="group rounded-lg px-3 py-2.5 transition-colors"
+            :class="lastAdded === item.id ? 'bg-sun/25' : 'hover:bg-muted'"
+          >
+            <div class="flex items-start gap-3">
+              <span class="min-w-0 flex-1 text-[15px] leading-snug font-medium">
+                <bdi>{{ item.name }}</bdi>
+              </span>
+              <span class="num font-semibold">{{
+                formatCurrency(item.price * item.quantity)
+              }}</span>
+            </div>
+            <div class="mt-1.5 flex items-center gap-1">
+              <button
+                type="button"
+                @click="decrementQuantity(item.id)"
+                :aria-label="`−1 ${item.name}`"
+                class="grid size-7 place-items-center rounded-md border bg-card hover:bg-accent"
+              >
+                <Minus :size="14" />
+              </button>
+              <span class="num w-8 text-center text-sm font-semibold">{{
+                item.quantity
+              }}</span>
+              <button
+                type="button"
+                @click="incrementQuantity(item.id)"
+                :aria-label="`+1 ${item.name}`"
+                class="grid size-7 place-items-center rounded-md border bg-card hover:bg-accent"
+              >
+                <Plus :size="14" />
+              </button>
+              <span class="num ms-2 text-xs text-muted-foreground"
+                >× {{ formatCurrency(item.price) }}</span
+              >
+              <button
+                type="button"
+                @click="removeFromCart(item.id)"
+                :aria-label="$t('settings.delete')"
+                class="ms-auto grid size-7 place-items-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
+              >
+                <X :size="16" />
+              </button>
+            </div>
+          </li>
+        </ol>
+
+        <div class="rule-dashed mx-5" />
+        <dl class="space-y-1.5 px-5 pt-4 text-sm">
+          <div class="flex justify-between">
+            <dt class="text-muted-foreground">{{ $t("pos.subtotal") }}</dt>
+            <dd class="num">{{ formatCurrency(subtotal) }}</dd>
+          </div>
+          <div class="flex justify-between">
+            <dt class="text-muted-foreground">
+              {{ $t("pos.tax") }} {{ TAX_RATE * 100 }}%
+            </dt>
+            <dd class="num">{{ formatCurrency(tax) }}</dd>
+          </div>
+          <div class="flex items-baseline justify-between pt-3">
+            <dt class="text-base font-semibold">{{ $t("pos.total") }}</dt>
+            <dd class="text-[2.5rem] leading-none font-bold tracking-tight">
+              {{ formatCurrency(total) }}
+            </dd>
+          </div>
+        </dl>
+      </div>
+
+      <fieldset class="grid grid-cols-2 gap-2">
+        <legend class="sr-only">{{ $t("pos.payWith") }}</legend>
+        <label
+          v-for="m in [
+            { id: 'cash', icon: Banknote },
+            { id: 'card', icon: CreditCard },
+          ] as const"
+          :key="m.id"
+          class="flex h-12 cursor-pointer items-center justify-center gap-2 rounded-lg border bg-card text-sm font-medium transition-colors has-checked:border-foreground has-checked:bg-foreground has-checked:text-background has-focus-visible:ring-2 has-focus-visible:ring-ring"
+        >
+          <input
+            v-model="payment"
+            type="radio"
+            name="payment"
+            :value="m.id"
+            class="sr-only"
+          />
+          <component :is="m.icon" :size="18" />
+          {{ $t(`pos.${m.id}`) }}
+        </label>
+      </fieldset>
+
+      <Button
+        variant="sun"
+        size="xl"
+        class="w-full justify-between"
+        :disabled="cartItems.length === 0"
+        @click="checkout"
+      >
+        <span>{{ $t("pos.charge") }}</span>
+        <span>{{ formatCurrency(total) }}</span>
+      </Button>
+
+      <div class="grid grid-cols-2 gap-2">
+        <Button
+          variant="outline"
+          size="lg"
+          :disabled="cartItems.length === 0"
+        >
+          <PauseCircle />
+          {{ $t("pos.hold") }}
+        </Button>
+        <Button
+          variant="outline"
+          size="lg"
+          class="hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
+          :disabled="cartItems.length === 0"
+          @click="clearCart"
+        >
+          <Trash2 />
+          {{ $t("pos.clearCart") }}
+        </Button>
+      </div>
+    </aside>
+  </div>
+</template>
