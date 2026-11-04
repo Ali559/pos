@@ -33,12 +33,16 @@ Chart.register(
   Filler,
 );
 
-const props = defineProps<{
-  type: ChartType;
-  data: ChartData;
-  options?: ChartOptions;
-  responsive?: boolean;
-}>();
+// Vue casts an absent boolean prop to false, so the default must be explicit
+const props = withDefaults(
+  defineProps<{
+    type: ChartType;
+    data: ChartData;
+    options?: ChartOptions;
+    responsive?: boolean;
+  }>(),
+  { responsive: true },
+);
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let chartInstance: Chart | null = null;
@@ -54,7 +58,7 @@ const initChart = () => {
     type: props.type,
     data: props.data,
     options: {
-      responsive: props.responsive ?? true,
+      responsive: props.responsive,
       maintainAspectRatio: false,
       ...props.options,
     },
@@ -84,5 +88,5 @@ watch(() => props.data, updateChart, { deep: true });
 </script>
 
 <template>
-  <canvas ref="canvasRef" class="w-full h-full"></canvas>
+  <canvas ref="canvasRef"></canvas>
 </template>

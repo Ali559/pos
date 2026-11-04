@@ -2,7 +2,7 @@
 
 A desktop point-of-sale app for small shops. It runs offline on the till machine as a native window (Tauri), with a Vue 3 front end and a local SQLite database. The interface is bilingual: English (left-to-right) and Kurdish Sorani (right-to-left).
 
-> Status: the UI shell and every screen are built, but data is still sample data in the front end (`src/data/catalog.ts` and local refs in views). The SQLite schema exists (`db.sql`) and the SQL plugin is registered, but no screen reads from or writes to the database yet. Login, checkout, and settings save are stubs. See `FEATURES.md` for the roadmap.
+> Status: the UI shell and every screen are built, but data is still sample data in the front end (`src/data/catalog.ts` and local refs in views). The SQLite schema exists (`db.sql`) and the SQL plugin is registered, but no screen reads from or writes to the database yet. Login, checkout, and settings save are stubs. See `PLAN.md` for the committed plan and `FEATURES.md` for the wider backlog.
 
 ## Stack
 
@@ -115,7 +115,7 @@ Radii follow hierarchy rather than one value: controls use `rounded-md` (8px), p
 
 Dark mode is class-based (`@custom-variant dark`). `useTheme()` holds the shared light/dark/system choice, persists it to `localStorage`, follows the OS when set to system, and toggles `.dark` on `<html>`; `main.ts` calls `initTheme()` before mount to avoid a flash.
 
-Use the `.num` utility (tabular figures) for numbers that sit in columns. Leave it off standalone values like totals and the clock: Schibsted's tabular set also widens punctuation.
+Mark numbers with the `.num` utility (lining figures). It deliberately does not enable tabular figures: Schibsted's tabular set also widens `.` and `:`, so `$1.50` renders as `$1 . 50`. End-align money columns instead.
 
 Wrap user/product data that may be in another script with `<bdi>` so English product names render correctly inside RTL layouts.
 

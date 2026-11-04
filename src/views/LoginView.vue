@@ -20,7 +20,7 @@ const handleLogin = () => {
 </script>
 
 <template>
-  <div class="grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
+  <div class="grid min-h-full lg:grid-cols-[1.1fr_1fr]">
     <!-- Brand side -->
     <aside
       class="relative hidden flex-col justify-between overflow-hidden bg-brand p-12 text-brand-foreground lg:flex"
@@ -38,11 +38,11 @@ const handleLogin = () => {
           <span>#1042</span><span>{{ timeOfDay }}</span>
         </div>
         <div class="space-y-3 text-[15px]">
-          <div class="flex justify-between"><span>Coca-Cola 330ml ×2</span><span class="num">$1.50</span></div>
-          <div class="flex justify-between"><span>Samoon bread (5)</span><span class="num">$0.50</span></div>
-          <div class="flex justify-between"><span>Fresh milk 1L</span><span class="num">$1.25</span></div>
-          <div class="flex justify-between"><span>Pomegranates 1kg</span><span class="num">$2.00</span></div>
-          <div class="flex justify-between"><span>Klicha date cookies</span><span class="num">$2.75</span></div>
+          <div class="flex justify-between"><span>Coca-Cola 330ml ×2</span><span>$1.50</span></div>
+          <div class="flex justify-between"><span>Samoon bread (5)</span><span>$0.50</span></div>
+          <div class="flex justify-between"><span>Fresh milk 1L</span><span>$1.25</span></div>
+          <div class="flex justify-between"><span>Pomegranates 1kg</span><span>$2.00</span></div>
+          <div class="flex justify-between"><span>Klicha date cookies</span><span>$2.75</span></div>
           <div class="rule-dashed !my-5" />
           <div class="flex items-baseline justify-between">
             <span class="font-semibold">Total</span>

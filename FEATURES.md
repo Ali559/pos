@@ -1,5 +1,7 @@
 # Features roadmap
 
+The wider backlog. Committed, prioritized work lives in `PLAN.md` and takes precedence over this list.
+
 Ideas worth adding, roughly in the order they'd pay off for a small Kurdish shop running this on one or two tills. Each item notes what already exists in `db.sql` so you can see how much is schema-ready.
 
 Legend: **S** small (a day or less) · **M** a few days · **L** a week or more

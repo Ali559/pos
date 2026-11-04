@@ -224,10 +224,10 @@ textarea {
     line-height: 1.8;
   }
 
-  /* figures in money columns must not shift as values change */
+  /* Numbers: lining figures. Schibsted's tabular set also widens "." and
+     ":" ($1 . 50), so columns rely on end-alignment instead of tnum. */
   .num {
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: "tnum" 1;
+    font-variant-numeric: lining-nums;
   }
 }
 

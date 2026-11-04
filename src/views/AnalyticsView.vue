@@ -152,15 +152,15 @@ const employees = [
         </div>
 
         <div class="grid gap-5 lg:grid-cols-5">
-          <section class="rounded-xl border bg-card p-5 lg:col-span-3">
+          <section class="min-w-0 rounded-xl border bg-card p-5 lg:col-span-3">
             <h2 class="mb-4 font-semibold">{{ $t("analytics.charts.salesOverview") }}</h2>
-            <div class="relative h-64">
+            <div class="relative h-64 w-full">
               <Chart type="line" :data="salesChartData" :options="salesChartOptions" />
             </div>
           </section>
-          <section class="rounded-xl border bg-card p-5 lg:col-span-2">
+          <section class="min-w-0 rounded-xl border bg-card p-5 lg:col-span-2">
             <h2 class="mb-4 font-semibold">{{ $t("analytics.charts.topProducts") }}</h2>
-            <div class="relative h-64">
+            <div class="relative h-64 w-full">
               <Chart type="bar" :data="prodChartData" :options="prodChartOptions" />
             </div>
           </section>

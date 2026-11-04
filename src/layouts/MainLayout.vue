@@ -14,7 +14,7 @@ const title = computed(() =>
 </script>
 
 <template>
-  <div class="flex h-screen overflow-hidden">
+  <div class="flex h-full overflow-hidden">
     <Sidebar />
     <div class="flex min-w-0 flex-1 flex-col">
       <Header :page-title="title" />

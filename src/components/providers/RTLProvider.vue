@@ -67,7 +67,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div :dir="direction" :lang="language">
+  <div :dir="direction" :lang="language" class="fixed inset-0 overflow-auto">
     <slot />
   </div>
 </template>
