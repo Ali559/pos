@@ -97,6 +97,86 @@ async fn may_upload(ctx: &Ctx) -> Result<()> {
     auth::current(ctx).await.map(|_| ())
 }
 
+/// iPhone photos (HEIC/HEIF): the ISO-BMFF "ftyp" box with a HEIF brand.
+pub fn is_heic(bytes: &[u8]) -> bool {
+    bytes.len() > 12
+        && &bytes[4..8] == b"ftyp"
+        && matches!(&bytes[8..12], b"heic" | b"heix" | b"hevc" | b"heim" | b"heis" | b"mif1" | b"msf1")
+}
+
+/// The `image` crate can't read HEIC; macOS ships a converter (`sips`)
+/// that can, so use it there. Elsewhere HEIC is refused with a clear code.
+fn heic_to_jpeg(bytes: &[u8]) -> Result<Vec<u8>> {
+    #[cfg(target_os = "macos")]
+    {
+        let dir = std::env::temp_dir().join(format!("pos-heic-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir)?;
+        let (input, output) = (dir.join("in.heic"), dir.join("out.jpg"));
+        std::fs::write(&input, bytes)?;
+        let status = std::process::Command::new("/usr/bin/sips")
+            .args(["-s", "format", "jpeg"])
+            .arg(&input)
+            .arg("--out")
+            .arg(&output)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        let result = match status {
+            Ok(s) if s.success() => std::fs::read(&output).map_err(Error::from),
+            _ => Err(Error::Rule("heic_unsupported")),
+        };
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = bytes;
+        Err(Error::Rule("heic_unsupported"))
+    }
+}
+
+/// Media no row points at any more (a replaced logo, a removed product
+/// photo, a lookup photo that was never saved), plus stray files. Kept for
+/// a day so an upload isn't swept away before its form is saved.
+pub async fn clean_unused(ctx: &Ctx) -> Result<usize> {
+    let unused: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, path FROM media_files m
+         WHERE datetime(created_at) < datetime('now', '-1 day')
+           AND NOT EXISTS (SELECT 1 FROM shop_profile WHERE logo_media_id = m.id)
+           AND NOT EXISTS (SELECT 1 FROM product_media WHERE media_id = m.id)
+           AND NOT EXISTS (SELECT 1 FROM categories WHERE image_media_id = m.id)
+           AND NOT EXISTS (SELECT 1 FROM users WHERE photo_media_id = m.id)
+           AND NOT EXISTS (SELECT 1 FROM expenses WHERE receipt_media_id = m.id)",
+    )
+    .fetch_all(&ctx.pool)
+    .await?;
+    for (id, path) in &unused {
+        sqlx::query("DELETE FROM media_files WHERE id = $1").bind(id).execute(&ctx.pool).await?;
+        let _ = std::fs::remove_file(ctx.media_dir.join(path));
+    }
+
+    // Files with no row at all (a crash between writing the file and the row)
+    let known: std::collections::HashSet<String> = sqlx::query_as::<_, (String,)>("SELECT path FROM media_files")
+        .fetch_all(&ctx.pool)
+        .await?
+        .into_iter()
+        .map(|(p,)| p)
+        .collect();
+    let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60);
+    let mut strays = 0;
+    if let Ok(entries) = std::fs::read_dir(&ctx.media_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let old = entry.metadata().and_then(|m| m.modified()).is_ok_and(|t| t < day_ago);
+            if name.ends_with(".webp") && !known.contains(&name) && old {
+                let _ = std::fs::remove_file(entry.path());
+                strays += 1;
+            }
+        }
+    }
+    Ok(unused.len() + strays)
+}
+
 /// Processes and stores one image. Shared by the command and the dev bridge.
 pub async fn upload(ctx: &Ctx, bytes: Vec<u8>, original_name: Option<String>) -> Result<MediaFile> {
     may_upload(ctx).await?;
@@ -120,7 +200,13 @@ pub async fn upload(ctx: &Ctx, bytes: Vec<u8>, original_name: Option<String>) ->
         return Ok(existing);
     }
 
-    let processed = tauri::async_runtime::spawn_blocking(move || process_image(&bytes))
+    let processed = tauri::async_runtime::spawn_blocking(move || {
+        if is_heic(&bytes) {
+            process_image(&heic_to_jpeg(&bytes)?)
+        } else {
+            process_image(&bytes)
+        }
+    })
         .await
         .map_err(|e| Error::Invalid(e.to_string()))??;
 

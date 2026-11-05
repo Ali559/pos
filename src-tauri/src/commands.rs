@@ -7,7 +7,7 @@ use tauri::AppHandle;
 
 use crate::ctx::Ctx;
 use crate::error::{Error, Result};
-use crate::{auth, catalog, expenses, export, lookup, notifications, query, returns, sales, settings, shifts, staff, stock};
+use crate::{auth, catalog, expenses, export, lookup, notifications, printing, query, returns, sales, settings, shifts, staff, stock};
 
 macro_rules! commands {
     ($( $name:ident $( ($args:ty) )? -> $out:ty => $f:path; )*) => {
@@ -49,6 +49,9 @@ commands! {
     logout -> () => auth::logout;
     end_shift (auth::EndShiftArgs) -> () => auth::end_shift;
     shift_summary -> Option<shifts::ShiftSummary> => shifts::shift_summary;
+    count_opening_cash (shifts::OpeningCountArgs) -> () => shifts::count_opening_cash;
+    list_printers -> Vec<printing::PrinterInfo> => printing::list_printers;
+    print_raster (printing::RasterArgs) -> () => printing::print_raster;
     authorize_override (auth::OverrideArgs) -> auth::OverrideGrant => auth::authorize_override;
 
     set_setting (settings::SetSettingArgs) -> () => settings::set_setting;
@@ -74,6 +77,8 @@ commands! {
 
     checkout (sales::CheckoutArgs) -> sales::SaleResult => sales::checkout;
     void_line (sales::VoidLineArgs) -> () => sales::void_line;
+    hold_sale (sales::HoldArgs) -> i64 => sales::hold_sale;
+    take_held_sale (sales::HeldIdArgs) -> serde_json::Value => sales::take_held_sale;
     create_return (returns::ReturnArgs) -> returns::ReturnResult => returns::create_return;
     receive_stock (stock::ReceiveArgs) -> () => stock::receive_stock;
     remove_stock (stock::RemoveArgs) -> () => stock::remove_stock;

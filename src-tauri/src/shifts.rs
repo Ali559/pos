@@ -106,6 +106,8 @@ pub struct ShiftSummary {
     pub shift_id: i64,
     pub clocked_in_at: String,
     pub opening_float: f64,
+    /// The cashier has counted the drawer for this shift
+    pub opening_counted: bool,
     pub sales: i64,
     pub cash_sales: f64,
     pub card_sales: f64,
@@ -120,7 +122,11 @@ async fn summary_for(ctx: &Ctx, user_id: i64) -> Result<Option<ShiftSummary>> {
     let Some(shift) = shift_info(ctx, user_id).await? else {
         return Ok(None);
     };
-    let (_, float) = ensure_drawer(ctx, user_id, shift.id).await?;
+    let (drawer_id, float) = ensure_drawer(ctx, user_id, shift.id).await?;
+    let (counted,): (Option<String>,) = sqlx::query_as("SELECT opening_counted_at FROM cash_drawers WHERE id = $1")
+        .bind(drawer_id)
+        .fetch_one(&ctx.pool)
+        .await?;
     let (sales, cash_sales, card_sales, cash_refunds, card_refunds): (i64, f64, f64, f64, f64) = sqlx::query_as(
         "SELECT COUNT(DISTINCT CASE WHEN amount > 0 THEN sale_id END),
                 COALESCE(SUM(CASE WHEN payment_method = 'cash' AND amount > 0 THEN amount END), 0.0),
@@ -136,6 +142,7 @@ async fn summary_for(ctx: &Ctx, user_id: i64) -> Result<Option<ShiftSummary>> {
         shift_id: shift.id,
         clocked_in_at: shift.clocked_in_at,
         opening_float: float,
+        opening_counted: counted.is_some(),
         sales,
         cash_sales,
         card_sales,
@@ -143,6 +150,36 @@ async fn summary_for(ctx: &Ctx, user_id: i64) -> Result<Option<ShiftSummary>> {
         card_refunds,
         expected_cash: float + cash_sales + cash_refunds,
     }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OpeningCountArgs {
+    pub amount: f64,
+}
+
+/// The cash actually in the drawer as the shift starts. Once per shift:
+/// after that the count is part of the record.
+pub async fn count_opening_cash(ctx: &Ctx, args: OpeningCountArgs) -> Result<()> {
+    let actor = auth::require(ctx, "sales.sell").await?;
+    if !(args.amount >= 0.0) {
+        return Err(Error::Rule("negative_amount"));
+    }
+    let Some(shift) = shift_info(ctx, actor.user_id).await? else {
+        return Err(Error::NotFound);
+    };
+    let (drawer_id, float) = ensure_drawer(ctx, actor.user_id, shift.id).await?;
+    let done = sqlx::query(
+        "UPDATE cash_drawers SET opening_amount = $1, opening_counted_at = $2 WHERE id = $3 AND opening_counted_at IS NULL",
+    )
+    .bind(args.amount)
+    .bind(now())
+    .bind(drawer_id)
+    .execute(&ctx.pool)
+    .await?;
+    if done.rows_affected() == 0 {
+        return Err(Error::Rule("opening_already_counted"));
+    }
+    audit::log(ctx, Some(actor.user_id), "drawer.open", "shifts", Some(shift.id), &serde_json::json!({ "counted": args.amount, "expected": float })).await
 }
 
 /// The signed-in user's open shift, for the End shift dialog.

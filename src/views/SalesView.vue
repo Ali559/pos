@@ -9,14 +9,17 @@ import {
   History,
   Loader2,
   Minus,
-  PauseCircle,
   Percent,
   Plus,
   Printer,
   ScanBarcode,
   Trash2,
+  Undo2,
   X,
 } from "lucide-vue-next";
+import HeldSales, { type HeldCart } from "@/components/sales/HeldSales.vue";
+import OpeningCashDialog from "@/components/sales/OpeningCashDialog.vue";
+import { useReturnCart } from "@/stores/returnCart";
 import { RouterLink } from "vue-router";
 import CashDialog from "@/components/sales/CashDialog.vue";
 import DiscountDialog from "@/components/sales/DiscountDialog.vue";
@@ -36,6 +39,7 @@ import { formatCurrency } from "@/lib/format";
 import { categoryInk, categoryTint } from "@/lib/categoryColor";
 import AppIcon from "@/components/icons/AppIcon.vue";
 import ProductThumb from "@/components/catalog/ProductThumb.vue";
+import MediaImage from "@/components/media/MediaImage.vue";
 import { useShop } from "@/stores/shop";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
@@ -54,7 +58,13 @@ interface SaleResult {
   receiptNumber: string;
   total: number;
   change: number | null;
+  /** Exchange: value of what came back, and what was paid back on top */
+  returned: number;
+  refunded: number;
 }
+
+/** What the done panel shows: a sale (maybe an exchange) or a plain refund */
+type Done = { kind: "sale"; sale: SaleResult } | { kind: "refund"; amount: number };
 
 const { t } = useI18n();
 const { taxRate, currency, load: loadShop } = useShop();
@@ -63,6 +73,11 @@ const pinDialog = ref<InstanceType<typeof ManagerPinDialog> | null>(null);
 const discountDialog = ref<InstanceType<typeof DiscountDialog> | null>(null);
 const cashDialog = ref<InstanceType<typeof CashDialog> | null>(null);
 const autoPrint = ref(false);
+const returns = useReturnCart();
+// Scans go to the items coming back instead of the cart
+const returnMode = ref(false);
+const openingOpen = ref(false);
+const openingExpected = ref(0);
 
 // State
 const barcode = ref("");
@@ -79,8 +94,8 @@ const activeCategory = ref<number | null>(null);
 const activeSub = ref<number | null>(null);
 const payment = ref<"cash" | "card">("cash");
 const lastAdded = ref<number | null>(null);
-// The last completed sale, shown on the empty receipt until the next scan
-const lastSale = ref<SaleResult | null>(null);
+// The last completed sale or refund, shown on the empty receipt until the next scan
+const lastSale = ref<Done | null>(null);
 const charging = ref(false);
 const chargeError = ref("");
 const cartItems = ref<CartItem[]>([]);
@@ -121,11 +136,26 @@ const lineDiscounts = computed(() => cartItems.value.reduce((sum, i) => sum + i.
 const discount = computed(() => lineDiscounts.value + cartDiscount.value);
 const tax = computed(() => roundMoney(((subtotal.value - discount.value) * taxRate.value) / 100));
 const total = computed(() => roundMoney(subtotal.value - discount.value) + tax.value);
+const returnValue = computed(() => returns.total(currency.value));
+// What the customer pays (positive) or gets back (negative)
+const net = computed(() => (cartItems.value.length ? total.value : 0) - returnValue.value);
+const nothingToCharge = computed(() => !cartItems.value.length && !returns.active.value);
 
 // Methods
 const focusScan = () => nextTick(() => scanInput.value?.focus());
 
+// No receipt: refunded at today's price with tax (returns.rs does the same)
+const addToReturn = (p: Product) => {
+  lastSale.value = null;
+  chargeError.value = "";
+  const unit = roundMoney(p.price) + roundMoney((p.price * taxRate.value) / 100);
+  if (!returns.addOpen({ id: p.id, name: p.name, unitRefund: unit })) {
+    chargeError.value = t("returnCart.receiptPending");
+  }
+};
+
 const addProduct = (p: Product) => {
+  if (returnMode.value) return addToReturn(p);
   if (stockState(p) === "out") return;
   lastSale.value = null;
   chargeError.value = "";
@@ -212,6 +242,28 @@ const resetCart = () => {
 
 const clearCart = () => runVoid(cartItems.value.map((i) => ({ id: i.id, quantity: i.quantity })), resetCart);
 
+const stepReturn = (i: number, by: number) => {
+  const l = returns.lines.value[i]!;
+  l.quantity = Math.min(l.max, l.quantity + by);
+  if (l.quantity <= 0) returns.lines.value.splice(i, 1);
+  if (!returns.active.value) returnMode.value = false;
+};
+
+const cancelReturn = () => {
+  returns.clear();
+  returnMode.value = false;
+  focusScan();
+};
+
+// Hold: the cart goes on a shelf; the register is free for the next customer
+const heldCart = computed<HeldCart>(() => ({ items: cartItems.value, cartDiscount: cartDiscount.value }));
+const resumeHeld = (cart: HeldCart) => {
+  lastSale.value = null;
+  cartItems.value = cart.items.map((i) => ({ ...i }));
+  cartDiscount.value = cart.cartDiscount;
+  focusScan();
+};
+
 const editLineDiscount = async (item: CartItem) => {
   const n = await discountDialog.value?.ask({ title: item.name, base: item.price * item.quantity, current: item.discount });
   if (n != null) item.discount = roundMoney(n);
@@ -234,20 +286,27 @@ const reloadProducts = async () => {
 
 // Rust recomputes prices from the database; only ids, quantities and
 // discount amounts go over
+const approve = async (permission: string) => {
+  if (auth.can(permission)) return null;
+  const grant = await pinDialog.value?.ask(permission);
+  return grant ? grant.token : undefined;
+};
+
 const checkout = async () => {
-  if (!cartItems.value.length || charging.value) return;
+  if (nothingToCharge.value || charging.value) return;
   chargeError.value = "";
+  // Items back and nothing bought: a plain refund
+  if (!cartItems.value.length) return refund();
+
   let tendered: number | null = null;
-  if (payment.value === "cash") {
-    tendered = (await cashDialog.value?.ask(total.value)) ?? null;
+  if (payment.value === "cash" && net.value > 0) {
+    tendered = (await cashDialog.value?.ask(net.value)) ?? null;
     if (tendered === null) return focusScan();
   }
-  let overrideToken: string | null = null;
-  if (discount.value > 0 && !auth.can("sales.discount")) {
-    const grant = await pinDialog.value?.ask("sales.discount");
-    if (!grant) return focusScan();
-    overrideToken = grant.token;
-  }
+  const overrideToken = discount.value > 0 ? await approve("sales.discount") : null;
+  if (overrideToken === undefined) return focusScan();
+  const refundOverrideToken = returns.active.value ? await approve("sales.refund") : null;
+  if (refundOverrideToken === undefined) return focusScan();
   charging.value = true;
   try {
     const sale = await call<SaleResult>("checkout", {
@@ -256,10 +315,14 @@ const checkout = async () => {
       paymentMethod: payment.value,
       tendered,
       overrideToken,
+      exchange: returns.active.value ? returns.payload() : null,
+      refundOverrideToken,
     });
-    lastSale.value = sale;
+    lastSale.value = { kind: "sale", sale };
     resetCart();
-    if (autoPrint.value) print(sale.id);
+    returns.clear();
+    returnMode.value = false;
+    if (autoPrint.value) print(sale.id, payment.value === "cash");
     await reloadProducts();
   } catch (e) {
     chargeError.value = errorMessage(e);
@@ -268,11 +331,43 @@ const checkout = async () => {
   }
 };
 
-const print = (id: number) =>
-  printReceipt(id).catch((e) => (chargeError.value = errorMessage(e)));
+const refund = async () => {
+  const overrideToken = await approve("sales.refund");
+  if (overrideToken === undefined) return focusScan();
+  charging.value = true;
+  try {
+    const r = await call<{ id: number; refund: number }>("create_return", {
+      ...returns.payload(),
+      refundMethod: payment.value,
+      overrideToken,
+    });
+    lastSale.value = { kind: "refund", amount: r.refund };
+    returns.clear();
+    returnMode.value = false;
+    await reloadProducts();
+  } catch (e) {
+    chargeError.value = errorMessage(e);
+  } finally {
+    charging.value = false;
+    focusScan();
+  }
+};
+
+const print = (id: number, openDrawer = false) =>
+  printReceipt(id, { openDrawer }).catch((e) => (chargeError.value = errorMessage(e)));
 
 onMounted(async () => {
   focusScan();
+  // A new shift starts with counting the drawer
+  call<{ openingCounted: boolean; openingFloat: number } | null>("shift_summary")
+    .then((sum) => {
+      if (sum && !sum.openingCounted) {
+        openingExpected.value = sum.openingFloat;
+        openingOpen.value = true;
+      }
+    })
+    .catch(() => {});
+  if (returns.active.value) returnMode.value = returns.saleId.value === null;
   const [cats, prods, , auto] = await Promise.all([
     listCategories(),
     listProducts(),
@@ -292,15 +387,20 @@ onMounted(async () => {
     <section class="flex min-w-0 flex-1 flex-col gap-5 overflow-y-auto p-6">
       <form @submit.prevent="addItemByBarcode">
         <label for="scan" class="sr-only">{{ $t("pos.scanBarcode") }}</label>
+        <div class="flex gap-2">
         <div
-          class="flex h-16 items-center gap-3 rounded-xl border-2 bg-card px-5 transition-colors"
+          class="flex h-16 min-w-0 flex-1 items-center gap-3 rounded-xl border-2 bg-card px-5 transition-colors"
           :class="
             scanError
               ? 'border-destructive'
-              : 'border-input focus-within:border-primary'
+              : returnMode
+                ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/30'
+                : 'border-input focus-within:border-primary'
           "
         >
+          <Undo2 v-if="returnMode" :size="26" :stroke-width="1.75" class="shrink-0 text-amber-600" />
           <ScanBarcode
+            v-else
             :size="26"
             :stroke-width="1.75"
             class="shrink-0 text-primary"
@@ -312,7 +412,7 @@ onMounted(async () => {
             type="text"
             inputmode="numeric"
             autocomplete="off"
-            :placeholder="$t('pos.barcodePlaceholder')"
+            :placeholder="returnMode ? $t('returnCart.scanBack') : $t('pos.barcodePlaceholder')"
             class="num h-full min-w-0 flex-1 bg-transparent text-xl tracking-wide outline-none placeholder:text-base placeholder:tracking-normal placeholder:text-muted-foreground"
             @input="notFoundCode = ''"
           />
@@ -320,6 +420,19 @@ onMounted(async () => {
             class="hidden rounded border bg-muted px-2 py-0.5 text-xs text-muted-foreground sm:block"
             >Enter</kbd
           >
+        </div>
+        <button
+          type="button"
+          class="flex h-16 shrink-0 items-center gap-2 rounded-xl border-2 px-4 text-sm font-medium transition-colors disabled:opacity-40"
+          :class="returnMode ? 'border-amber-500 bg-amber-500 text-white' : 'border-input bg-card hover:border-foreground/30'"
+          :aria-pressed="returnMode"
+          :disabled="returns.saleId.value !== null"
+          :title="$t('returnCart.toggleHint')"
+          @click="returnMode = !returnMode; focusScan()"
+        >
+          <Undo2 :size="18" />
+          {{ $t("returnCart.toggle") }}
+        </button>
         </div>
         <p
           v-if="scanError"
@@ -351,10 +464,11 @@ onMounted(async () => {
             class="flex h-10 items-center gap-2 rounded-full border ps-2 pe-4 text-sm font-medium transition-colors hover:border-foreground/30 aria-selected:border-foreground aria-selected:bg-foreground aria-selected:text-background"
           >
             <span
-              class="grid size-7 place-items-center rounded-full"
+              class="grid size-7 place-items-center overflow-hidden rounded-full"
               :style="{ background: categoryTint(c.color), color: categoryInk(c.color) }"
             >
-              <AppIcon :icon="c.icon_key" :size="16" />
+              <MediaImage v-if="c.image" :media="c.image" class="size-full" />
+              <AppIcon v-else :icon="c.icon_key" :size="16" />
             </span>
             {{ c.name }}
           </button>
@@ -394,7 +508,7 @@ onMounted(async () => {
           <button
             type="button"
             @click="addProduct(p)"
-            :disabled="stockState(p) === 'out'"
+            :disabled="stockState(p) === 'out' && !returnMode"
             class="relative flex h-40 w-full flex-col gap-2 rounded-xl p-3 text-start transition-[transform,box-shadow] hover:ring-2 hover:ring-foreground/15 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
             :style="{
               background: categoryTint(p.categoryColor),
@@ -458,27 +572,70 @@ onMounted(async () => {
         <div class="rule-dashed mx-5" />
 
         <ol class="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+          <!-- Items coming back (a return, or the old half of an exchange) -->
+          <li v-if="returns.active.value" class="mb-2 rounded-lg border border-amber-500/40 bg-amber-50 px-3 py-2.5 dark:bg-amber-950/30">
+            <div class="mb-1.5 flex items-center justify-between gap-2 text-sm font-semibold text-amber-700 dark:text-amber-400">
+              <span class="flex items-center gap-1.5">
+                <Undo2 :size="15" />
+                {{ returns.receiptNumber.value ? $t("returnCart.fromReceipt", { receipt: returns.receiptNumber.value }) : $t("returnCart.noReceipt") }}
+              </span>
+              <button type="button" class="text-xs font-medium underline-offset-2 hover:underline" @click="cancelReturn">{{ $t("common.cancel") }}</button>
+            </div>
+            <ul class="space-y-1.5">
+              <li v-for="(l, i) in returns.lines.value" :key="l.saleItemId ?? `p${l.productId}`" class="text-sm">
+                <div class="flex items-start gap-2">
+                  <bdi class="min-w-0 flex-1 font-medium">{{ l.name }}</bdi>
+                  <span class="num font-semibold">−{{ formatCurrency(roundMoney(l.unitRefund * l.quantity)) }}</span>
+                </div>
+                <div class="mt-1 flex items-center gap-1">
+                  <button type="button" class="grid size-6 place-items-center rounded border bg-card" :aria-label="`−1 ${l.name}`" @click="stepReturn(i, -1)"><Minus :size="12" /></button>
+                  <span class="num w-7 text-center text-xs font-semibold">{{ l.quantity }}</span>
+                  <button type="button" class="grid size-6 place-items-center rounded border bg-card disabled:opacity-40" :disabled="l.quantity >= l.max" :aria-label="`+1 ${l.name}`" @click="stepReturn(i, 1)"><Plus :size="12" /></button>
+                  <label class="ms-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <input v-model="l.restock" type="checkbox" class="size-3.5 accent-primary" />
+                    {{ $t("returns.restock") }}
+                  </label>
+                </div>
+              </li>
+            </ul>
+          </li>
           <li
-            v-if="cartItems.length === 0 && lastSale"
+            v-if="cartItems.length === 0 && !returns.active.value && lastSale"
             class="flex h-full flex-col items-center justify-center gap-2 px-6 text-center"
             role="status"
           >
             <span class="grid size-12 place-items-center rounded-full bg-success/12 text-success">
               <Check :size="26" />
             </span>
-            <span class="font-semibold">{{ $t("pos.saleDone") }}</span>
-            <span class="num text-sm text-muted-foreground" dir="ltr">{{ lastSale.receiptNumber }}</span>
-            <span class="text-2xl font-bold">{{ formatCurrency(lastSale.total) }}</span>
-            <span v-if="lastSale.change" class="mt-2 rounded-lg bg-success/10 px-4 py-2 text-success">
-              {{ $t("cash.change") }}
-              <span class="num block text-3xl font-bold">{{ formatCurrency(lastSale.change) }}</span>
-            </span>
-            <Button variant="outline" size="sm" class="mt-2" @click="print(lastSale.id)">
-              <Printer /> {{ $t("receipt.print") }}
-            </Button>
+            <template v-if="lastSale.kind === 'sale'">
+              <span class="font-semibold">{{ $t("pos.saleDone") }}</span>
+              <span class="num text-sm text-muted-foreground" dir="ltr">{{ lastSale.sale.receiptNumber }}</span>
+              <span class="text-2xl font-bold">{{ formatCurrency(lastSale.sale.total) }}</span>
+              <span v-if="lastSale.sale.returned" class="text-sm text-muted-foreground">
+                {{ $t("returnCart.exchanged", { amount: formatCurrency(lastSale.sale.returned) }) }}
+              </span>
+              <span v-if="lastSale.sale.change" class="mt-2 rounded-lg bg-success/10 px-4 py-2 text-success">
+                {{ $t("cash.change") }}
+                <span class="num block text-3xl font-bold">{{ formatCurrency(lastSale.sale.change) }}</span>
+              </span>
+              <span v-if="lastSale.sale.refunded" class="mt-2 rounded-lg bg-amber-500/10 px-4 py-2 text-amber-700 dark:text-amber-400">
+                {{ $t("returnCart.payBack") }}
+                <span class="num block text-3xl font-bold">{{ formatCurrency(lastSale.sale.refunded) }}</span>
+              </span>
+              <Button variant="outline" size="sm" class="mt-2" @click="print(lastSale.sale.id)">
+                <Printer /> {{ $t("receipt.print") }}
+              </Button>
+            </template>
+            <template v-else>
+              <span class="font-semibold">{{ $t("returnCart.refundDone") }}</span>
+              <span class="mt-2 rounded-lg bg-amber-500/10 px-4 py-2 text-amber-700 dark:text-amber-400">
+                {{ $t("returnCart.payBack") }}
+                <span class="num block text-3xl font-bold">{{ formatCurrency(lastSale.amount) }}</span>
+              </span>
+            </template>
           </li>
           <li
-            v-else-if="cartItems.length === 0"
+            v-else-if="cartItems.length === 0 && !returns.active.value"
             class="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground"
           >
             {{ $t("pos.emptyCart") }}
@@ -569,10 +726,14 @@ onMounted(async () => {
             </dt>
             <dd class="num">{{ formatCurrency(tax) }}</dd>
           </div>
+          <div v-if="returns.active.value" class="flex justify-between text-amber-700 dark:text-amber-400">
+            <dt>{{ $t("returnCart.comingBack") }}</dt>
+            <dd class="num">−{{ formatCurrency(returnValue) }}</dd>
+          </div>
           <div class="flex items-baseline justify-between pt-3">
-            <dt class="text-base font-semibold">{{ $t("pos.total") }}</dt>
+            <dt class="text-base font-semibold">{{ net < 0 ? $t("returnCart.toRefund") : $t("pos.total") }}</dt>
             <dd class="text-[2.5rem] leading-none font-bold tracking-tight">
-              {{ formatCurrency(total) }}
+              {{ formatCurrency(Math.abs(net)) }}
             </dd>
           </div>
         </dl>
@@ -607,25 +768,24 @@ onMounted(async () => {
         variant="sun"
         size="xl"
         class="w-full justify-between"
-        :disabled="cartItems.length === 0 || charging"
+        :disabled="nothingToCharge || charging"
         @click="checkout"
       >
         <span class="flex items-center gap-2">
           <Loader2 v-if="charging" class="animate-spin" />
-          {{ $t("pos.charge") }}
+          {{ net < 0 ? $t("returnCart.refund") : $t("pos.charge") }}
         </span>
-        <span>{{ formatCurrency(total) }}</span>
+        <span>{{ formatCurrency(Math.abs(net)) }}</span>
       </Button>
 
-      <div class="grid grid-cols-2 gap-2">
-        <Button
-          variant="outline"
-          size="lg"
-          :disabled="cartItems.length === 0"
-        >
-          <PauseCircle />
-          {{ $t("pos.hold") }}
-        </Button>
+      <div class="grid grid-cols-3 gap-2">
+        <HeldSales
+          :cart="heldCart"
+          :can-hold="cartItems.length > 0 && !returns.active.value"
+          :can-resume="cartItems.length === 0"
+          @held="resetCart(); lastSale = null"
+          @resume="resumeHeld"
+        />
         <Button
           variant="outline"
           size="lg"
@@ -641,5 +801,6 @@ onMounted(async () => {
     <ManagerPinDialog ref="pinDialog" />
     <DiscountDialog ref="discountDialog" />
     <CashDialog ref="cashDialog" />
+    <OpeningCashDialog v-model:open="openingOpen" :expected="openingExpected" @counted="focusScan()" />
   </div>
 </template>

@@ -42,16 +42,15 @@ const linesCte = (f: Filters) => {
     LEFT JOIN categories c ON c.id = p.category_id
     WHERE s.sale_date >= $1 AND s.sale_date < $2 AND s.payment_status <> 'pending'${and}
     UNION ALL
-    SELECT NULL, si.product_id, si.product_name, -ri.quantity, -ri.subtotal,
-           -si.cost_price * ri.quantity, r.return_date, s.user_id,
+    SELECT NULL, ri.product_id, ri.product_name, -ri.quantity, -ri.subtotal,
+           -ri.cost_price * ri.quantity, r.return_date, COALESCE(s.user_id, r.user_id),
            COALESCE(c.parent_id, c.id)
     FROM return_items ri
     JOIN returns r ON r.id = ri.return_id
-    JOIN sale_items si ON si.id = ri.sale_item_id
-    JOIN sales s ON s.id = si.sale_id
-    LEFT JOIN products p ON p.id = si.product_id
+    LEFT JOIN sales s ON s.id = r.original_sale_id
+    LEFT JOIN products p ON p.id = ri.product_id
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE r.return_date >= $1 AND r.return_date < $2${and}
+    WHERE r.return_date >= $1 AND r.return_date < $2${and.split("s.user_id").join("COALESCE(s.user_id, r.user_id)")}
   )`;
   return { sql, params };
 };
@@ -178,19 +177,23 @@ export const categorySales = (f: Filters) => {
 };
 
 /** Payments are per sale, so a category filter doesn't apply here. Refunds
- *  are negative payments, counted on the day they were paid out. */
+ *  are negative payments, counted on the day they were paid out; exchange
+ *  credit moves between a return and a sale and nets to zero, so it's left out. */
 export const paymentSplit = (f: Filters) => {
   const params: unknown[] = [toUtc(f.range.from), toUtc(f.range.to)];
   let user = "";
   if (f.userId) {
     params.push(f.userId);
-    user = ` AND s.user_id = $3`;
+    user = ` AND COALESCE(s.user_id, r.user_id) = $3`;
   }
   return select<{ method: string; amount: number; transactions: number }>(
     `SELECT pay.payment_method AS method, SUM(pay.amount) AS amount,
             COUNT(DISTINCT CASE WHEN pay.amount > 0 THEN s.id END) AS transactions
-     FROM payments pay JOIN sales s ON s.id = pay.sale_id
-     WHERE pay.payment_date >= $1 AND pay.payment_date < $2 AND s.payment_status <> 'pending'${user}
+     FROM payments pay
+     LEFT JOIN sales s ON s.id = pay.sale_id
+     LEFT JOIN returns r ON r.id = pay.return_id
+     WHERE pay.payment_date >= $1 AND pay.payment_date < $2 AND pay.payment_method <> 'exchange'
+       AND (s.id IS NULL OR s.payment_status <> 'pending')${user}
      GROUP BY pay.payment_method ORDER BY amount DESC`,
     params,
   );

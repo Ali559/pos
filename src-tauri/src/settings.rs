@@ -51,7 +51,7 @@ pub async fn set_setting(ctx: &Ctx, args: SetSettingArgs) -> Result<()> {
                 _ => return Err(Error::Invalid("expiry_warn_days must be 0–90".into())),
             }
         }
-        "os_notifications" | "barcode_lookup" | "auto_print" => {
+        "os_notifications" | "barcode_lookup" | "auto_print" | "block_expired" => {
             let actor = auth::require(ctx, "settings.system").await?;
             flag(v)?;
             Some(actor)
@@ -69,6 +69,17 @@ pub async fn set_setting(ctx: &Ctx, args: SetSettingArgs) -> Result<()> {
                 Ok(n) if n >= 0.0 => Some(actor),
                 _ => return Err(Error::Rule("negative_amount")),
             }
+        }
+        // "", "system:<printer name>" or "tcp:<host>:<port>"
+        "receipt_printer" => {
+            let actor = auth::require(ctx, "settings.system").await?;
+            let ok = v.is_empty()
+                || v.strip_prefix("system:").is_some_and(|n| !n.trim().is_empty())
+                || v.strip_prefix("tcp:").is_some_and(|a| a.rsplit_once(':').is_some_and(|(h, p)| !h.is_empty() && p.parse::<u16>().is_ok()));
+            if !ok {
+                return Err(Error::Rule("printer_address"));
+            }
+            Some(actor)
         }
         other => return Err(Error::Invalid(format!("unknown setting {other}"))),
     };

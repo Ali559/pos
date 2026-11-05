@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { Minus, Plus, Undo2 } from "lucide-vue-next";
+import { ArrowLeftRight, Minus, Plus, Undo2 } from "lucide-vue-next";
+import { useRouter } from "vue-router";
+import { useReturnCart } from "@/stores/returnCart";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,7 +34,7 @@ watch(open, (isOpen) => {
   if (!isOpen) return;
   rows.value = props.sale.lines.map((l) => ({ id: l.id, qty: 0, restock: true }));
   reason.value = "";
-  method.value = props.sale.method;
+  method.value = props.sale.method === "card" ? "card" : "cash";
   error.value = "";
 });
 
@@ -45,14 +47,37 @@ const takeAll = () => rows.value.forEach((r, i) => (r.qty = left(i)));
 
 const round = (n: number) => (currency.value === "IQD" ? Math.round(n) : Math.round(n * 100) / 100);
 // Same arithmetic as returns::create_return, for the preview only
-const refund = computed(() =>
-  rows.value.reduce((sum, r, i) => {
-    if (!r.qty) return sum;
-    const l = props.sale.lines[i]!;
-    const sub = round((l.subtotal / l.quantity) * r.qty);
-    return sum + sub + round((sub * l.tax_rate) / 100);
-  }, 0),
-);
+const lineRefund = (i: number, qty: number) => {
+  const l = props.sale.lines[i]!;
+  const sub = round((l.subtotal / l.quantity) * qty);
+  return sub + round((sub * l.tax_rate) / 100);
+};
+const refund = computed(() => rows.value.reduce((sum, r, i) => sum + (r.qty ? lineRefund(i, r.qty) : 0), 0));
+
+// Exchange: take the picked items to the register, where they pay for
+// whatever the customer takes instead
+const router = useRouter();
+const returnCart = useReturnCart();
+const exchange = () => {
+  returnCart.fromSale(
+    { id: props.sale.id, receipt: props.sale.receipt_number },
+    rows.value
+      .map((r, i) => ({ r, i, l: props.sale.lines[i]! }))
+      .filter(({ r }) => r.qty > 0)
+      .map(({ r, i, l }) => ({
+        saleItemId: l.id,
+        productId: l.product_id,
+        name: l.name,
+        quantity: r.qty,
+        max: left(i),
+        unitRefund: lineRefund(i, r.qty) / r.qty,
+        restock: r.restock,
+      })),
+  );
+  returnCart.reason.value = reason.value;
+  open.value = false;
+  router.push("/main/point-of-sale");
+};
 const any = computed(() => rows.value.some((r) => r.qty > 0));
 
 const submit = async () => {
@@ -151,7 +176,12 @@ const submit = async () => {
             <span class="block text-sm text-muted-foreground">{{ $t("returns.refund") }}</span>
             <span class="num text-2xl font-bold">{{ formatCurrency(refund) }}</span>
           </p>
-          <Button type="submit" size="lg" :disabled="!any || busy"><Undo2 /> {{ $t("returns.confirm") }}</Button>
+          <div class="flex gap-2">
+            <Button type="button" size="lg" variant="outline" :disabled="!any || busy" @click="exchange">
+              <ArrowLeftRight /> {{ $t("returns.exchange") }}
+            </Button>
+            <Button type="submit" size="lg" :disabled="!any || busy"><Undo2 /> {{ $t("returns.confirm") }}</Button>
+          </div>
         </div>
       </form>
       <ManagerPinDialog ref="pinDialog" />

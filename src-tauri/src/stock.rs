@@ -15,6 +15,24 @@ use crate::ctx::{now, Ctx};
 use crate::error::{Error, Result};
 use crate::notifications;
 
+/// Today on the till's clock, as YYYY-MM-DD (expiry dates are local).
+pub fn today() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
+}
+
+/// How much of the product sits in batches that expired before `today`.
+pub async fn expired_quantity(tx: &mut Transaction<'_, Sqlite>, product_id: i64, today: &str) -> Result<f64> {
+    let (n,): (f64,) = sqlx::query_as(
+        "SELECT CAST(COALESCE(SUM(quantity_remaining), 0) AS REAL) FROM product_batches
+         WHERE product_id = $1 AND quantity_remaining > 0 AND expiry_date < $2",
+    )
+    .bind(product_id)
+    .bind(today)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(n)
+}
+
 pub fn parse_date(s: &str) -> Result<String> {
     NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
         .map(|d| d.format("%Y-%m-%d").to_string())
@@ -23,14 +41,17 @@ pub fn parse_date(s: &str) -> Result<String> {
 
 /// Takes `qty` out of the product's batches, soonest expiry first (undated
 /// last). Stock that was never batched just isn't tracked, so running out
-/// of batches is fine.
-pub async fn consume_batches(tx: &mut Transaction<'_, Sqlite>, product_id: i64, qty: f64) -> Result<()> {
+/// of batches is fine. With `fresh_from` (a YYYY-MM-DD date), batches that
+/// expired before it are left alone.
+pub async fn consume_batches(tx: &mut Transaction<'_, Sqlite>, product_id: i64, qty: f64, fresh_from: Option<&str>) -> Result<()> {
     let batches: Vec<(i64, f64)> = sqlx::query_as(
         "SELECT id, quantity_remaining FROM product_batches
          WHERE product_id = $1 AND quantity_remaining > 0
+           AND ($2 IS NULL OR expiry_date IS NULL OR expiry_date >= $2)
          ORDER BY expiry_date IS NULL, expiry_date, received_at, id",
     )
     .bind(product_id)
+    .bind(fresh_from)
     .fetch_all(&mut **tx)
     .await?;
     let mut left = qty;
@@ -175,7 +196,7 @@ pub async fn remove_stock(ctx: &Ctx, args: RemoveArgs) -> Result<()> {
                 return Err(Error::NotFound);
             }
         }
-        None => consume_batches(&mut tx, args.product_id, args.quantity).await?,
+        None => consume_batches(&mut tx, args.product_id, args.quantity, None).await?,
     }
     sqlx::query("UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2")
         .bind(args.quantity)

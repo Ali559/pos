@@ -1,3 +1,4 @@
+import { mediaColumns, takeMedia, type MediaColumns } from "./media";
 import { select, selectOne } from "./client";
 import type { MediaFile } from "@/lib/media";
 
@@ -13,6 +14,7 @@ export interface Category {
   is_active: number;
   display_order: number;
   product_count: number;
+  image: MediaFile | null;
 }
 
 export interface Product {
@@ -40,16 +42,23 @@ export type StockState = "ok" | "low" | "out";
 export const stockState = (p: Pick<Product, "stock" | "minStock">): StockState =>
   p.stock <= 0 ? "out" : p.stock <= p.minStock ? "low" : "ok";
 
-export const listCategories = (includeArchived = false) =>
-  select<Category>(
+export const listCategories = async (includeArchived = false): Promise<Category[]> => {
+  const rows = await select<Omit<Category, "image"> & MediaColumns>(
     `SELECT c.id, c.name, c.description, c.parent_id, c.icon_key,
             COALESCE(c.color, p.color) AS color, c.color AS own_color, c.is_active, c.display_order,
-            (SELECT COUNT(*) FROM products pr WHERE pr.category_id = c.id) AS product_count
+            (SELECT COUNT(*) FROM products pr WHERE pr.category_id = c.id) AS product_count,
+            ${mediaColumns("m")}
      FROM categories c LEFT JOIN categories p ON p.id = c.parent_id
+     LEFT JOIN media_files m ON m.id = c.image_media_id
      ${includeArchived ? "" : "WHERE c.is_active = 1 AND (p.id IS NULL OR p.is_active = 1)"}
      ORDER BY COALESCE(p.display_order, c.display_order), COALESCE(p.id, c.id),
               c.parent_id IS NOT NULL, c.display_order, c.name`,
   );
+  return rows.map((row) => {
+    const [image, rest] = takeMedia(row);
+    return { ...rest, image };
+  });
+};
 
 const PRODUCT_COLUMNS = `
   p.id, p.sku, p.name, p.barcode,

@@ -22,9 +22,9 @@ Everything later depends on these. Done 2026-11-04; see ARCHITECTURE.md for how 
 
 **Left over from Phase 1**
 - ⬜ Native-speaker review of `ku` and `ar` strings.
-- ⬜ Media cleanup job for files no row references (nothing can orphan a file yet except replacing the shop logo).
-- ⬜ HEIC decoding (iPhone photos) — not supported; JPEG/PNG/WebP/GIF/BMP are.
-- ⬜ Upload and image display verified only by Rust unit tests and type-checking; try a logo upload in `bun run tauri dev`.
+- ✅ Media cleanup job for files no row references (§6).
+- ✅ HEIC decoding (iPhone photos) on macOS via the system converter; refused with a clear message on Windows/Linux (§6).
+- ✅ Logo upload checked end to end in `bun run tauri dev` (2026-11-05).
 
 ### 1.1 Data layer and migrations
 - Move schema into versioned migrations registered with `tauri_plugin_sql::Builder::add_migrations` in `src-tauri/src/lib.rs`. `db.sql` becomes migration `0001`.
@@ -116,11 +116,11 @@ Done 2026-11-04; see ARCHITECTURE.md → Security model, Sign-in, sessions and s
 - Weeks in the schedule start on Saturday.
 
 **Deferred, waiting on checkout (no sales exist yet)**
-- ⬜ 2.4 Employee performance (planned together with 4.3).
-- ⬜ Manager PIN override: nothing a cashier is blocked from at the till yet.
-- ⬜ Cash count when a shift closes (`cash_drawers` over/short).
-- ⬜ Employee photo upload (column and media pipeline exist; no UI yet).
-- ⬜ Sign-in attempt throttling.
+- ✅ 2.4 Employee performance (delivered with Phase 4).
+- ✅ Manager PIN override (Phase 5).
+- ✅ Cash count when a shift closes (Phase 5) and opens (§6).
+- ✅ Employee photo upload (§6).
+- ✅ Sign-in attempt throttling (§6).
 
 ### 2.1 RBAC, fully dynamic
 Replace the `users.role` text column and `user_permissions` with real roles and permissions.
@@ -204,9 +204,9 @@ Done 2026-11-04; see ARCHITECTURE.md → Catalog and icons.
 - The synonym map starts at ~60 groups (several hundred words), validated so every keyword hits a real icon, rather than 500 words.
 
 **Left for later**
-- ⬜ Category image upload (`categories.image_media_id` exists; no UI).
-- ⬜ Stock adjustments after creation (`inventory.adjust_stock`; FEATURES.md → Stock).
-- ⬜ Media cleanup for photos removed from products (files and rows stay).
+- ✅ Category image upload (§6).
+- ✅ Stock adjustments after creation (receive/remove, Phase 4).
+- ✅ Media cleanup for photos removed from products (§6).
 
 ### 3.1 Categories and subcategories
 - `categories.parent_id` already exists; limit depth to two levels (category → subcategory) in the UI.
@@ -256,7 +256,7 @@ Done 2026-11-04; see ARCHITECTURE.md → Money.
 
 **Left for later**
 - ✅ Returns, discounts, voids, manager override, cash/change, drawer count, receipts: see §5.
-- ⬜ Selling expired batches is allowed (they're used first); blocking it at the till is a shop decision.
+- ✅ Selling expired batches is the shop's choice: the `block_expired` setting (§6).
 
 ### 4.1 Notifications
 ```sql
@@ -345,10 +345,30 @@ Done 2026-11-05 (the "left for later" money items plus a round of requests).
 - **Receipts**: 58/80 mm print layout with logo, shop details, lines, discounts, tax, cash/change and a Code 128 barcode of the receipt number; optional print after every sale.
 
 **Left for later**
-- ⬜ Opening float is taken from the setting; there's no count at the start of a shift.
-- ⬜ Hold/park sale (the button is still a stub; `held_sales` exists).
-- ⬜ Receipt printing goes through the system print dialog; silent printing to a chosen thermal printer needs a printer plugin.
-- ⬜ Return without a receipt, exchanges.
+- ✅ Opening cash count at the start of a shift (§6).
+- ✅ Hold/park sale (§6).
+- ✅ Direct printing to a thermal printer (§6).
+- ✅ Return without a receipt, exchanges (§6).
+
+## 6. Register, the rest ✅
+
+Done 2026-11-05: everything left open in §1–5, apart from the native-speaker review.
+
+- **Opening count.** A new shift opens the register with *Count the drawer* (the `opening_float` setting filled in); the count replaces the float for that shift and End shift measures against it. Once per shift (`count_opening_cash`).
+- **Hold and resume.** *Hold* parks the cart (optionally named, e.g. "blue coat") in `held_sales`; *Held (n)* lists them for anyone at the till to resume or discard. Prices are checked again at checkout.
+- **Returns without a receipt.** The *Return* toggle by the scan bar sends scans to a "coming back" list, refunded at today's price and tax.
+- **Exchanges.** Items coming back (from a receipt via Sales history → Exchange, or without one) are netted against what's bought in one checkout: their value pays first (`exchange` payments that net to zero), the rest is charged, or the surplus is paid back in cash or card. Migration `0008` lets returns and refund payments exist without a sale.
+- **Direct printing.** Settings → Register → Receipt printer: the print dialog, an installed printer (raw job through CUPS or the Windows spooler), or a network printer (`host:9100`). The WebView draws the receipt at 203 dpi (so Kurdish and Arabic are shaped properly) and Rust sends it as an ESC/POS raster, with a paper cut and a cash-drawer kick after cash sales. *Print a test* checks the printer.
+- **Expired stock** can be refused at the till (`block_expired`): only fresh batches are sold.
+- **Sign-in throttling.** Five wrong passwords for a username, or five wrong PINs at the till, lock that sign-in for 30 s, doubling up to 15 minutes (`auth_throttle`). Manager approvals count as PIN attempts.
+- **Photos.** Employee photos and category pictures (shown in lists and the register's category chips).
+- **Media cleanup**, hourly: images no shop logo, product, category, employee or expense uses, older than a day, and stray files.
+- **HEIC** (iPhone photos) converted with macOS's `sips` before the normal pipeline.
+
+**Left for later**
+- ⬜ Native-speaker review of the `ku` and `ar` strings.
+- ⬜ HEIC on Windows/Linux (needs libheif or the Windows HEIF codec).
+- ⬜ Direct printing has been checked against a simulated network printer and the ESC/POS output decoded back to an image; try it on the shop's real printer.
 
 ## Order of work
 

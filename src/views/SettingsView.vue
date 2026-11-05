@@ -22,6 +22,7 @@ import { errorMessage } from "@/lib/errors";
 import type { ShopProfile } from "@/db/shop";
 import type { MediaFile } from "@/lib/media";
 import { getSetting, setSetting } from "@/db/settings";
+import { printTestPage } from "@/lib/print";
 
 const { t } = useI18n();
 const { theme } = useTheme();
@@ -71,7 +72,30 @@ const saveAlerts = async () => {
 };
 
 // Register: receipts, drawer, barcode lookup
-const register = ref({ receiptWidth: "80", autoPrint: false, openingFloat: 0, barcodeLookup: true });
+const register = ref({ receiptWidth: "80", autoPrint: false, openingFloat: 0, barcodeLookup: true, blockExpired: false });
+
+// Receipt printer: the system dialog, an installed printer, or a network one
+const printerMode = ref<"dialog" | "system" | "network">("dialog");
+const systemPrinter = ref("");
+const networkPrinter = ref("");
+const printers = ref<{ systemName: string; name: string }[]>([]);
+const printerTarget = computed(() =>
+  printerMode.value === "system" && systemPrinter.value
+    ? `system:${systemPrinter.value}`
+    : printerMode.value === "network" && networkPrinter.value.trim()
+      ? `tcp:${networkPrinter.value.trim().includes(":") ? networkPrinter.value.trim() : `${networkPrinter.value.trim()}:9100`}`
+      : "",
+);
+const testMessage = ref("");
+const testPrint = async () => {
+  testMessage.value = "";
+  try {
+    await printTestPage(printerTarget.value);
+    testMessage.value = t("settings.register.testSent");
+  } catch (e) {
+    testMessage.value = errorMessage(e);
+  }
+};
 const registerSaved = ref(false);
 const registerError = ref("");
 const saveRegister = async () => {
@@ -82,6 +106,8 @@ const saveRegister = async () => {
     await setSetting("auto_print", r.autoPrint ? "1" : "0");
     await setSetting("opening_float", String(Math.max(0, Number(r.openingFloat) || 0)));
     await setSetting("barcode_lookup", r.barcodeLookup ? "1" : "0");
+    await setSetting("block_expired", r.blockExpired ? "1" : "0");
+    await setSetting("receipt_printer", printerTarget.value);
     flash(registerSaved);
   } catch (e) {
     registerError.value = errorMessage(e);
@@ -136,15 +162,24 @@ onMounted(async () => {
   resetShopForm();
   warnDays.value = Number(await getSetting("expiry_warn_days")) || 7;
   osAlerts.value = (await getSetting("os_notifications")) !== "0";
-  const [width, auto, float, lookup] = await Promise.all(
-    ["receipt_width", "auto_print", "opening_float", "barcode_lookup"].map(getSetting),
+  const [width, auto, float, lookup, blockExpired, printer] = await Promise.all(
+    ["receipt_width", "auto_print", "opening_float", "barcode_lookup", "block_expired", "receipt_printer"].map(getSetting),
   );
   register.value = {
     receiptWidth: width === "58" ? "58" : "80",
     autoPrint: auto === "1",
     openingFloat: Number(float) || 0,
     barcodeLookup: lookup !== "0",
+    blockExpired: blockExpired === "1",
   };
+  if (printer?.startsWith("system:")) {
+    printerMode.value = "system";
+    systemPrinter.value = printer.slice(7);
+  } else if (printer?.startsWith("tcp:")) {
+    printerMode.value = "network";
+    networkPrinter.value = printer.slice(4);
+  }
+  if (canSystem.value) printers.value = await call<typeof printers.value>("list_printers").catch(() => []);
 });
 </script>
 
@@ -228,6 +263,39 @@ onMounted(async () => {
                 </div>
               </div>
               <p class="-mt-2 text-xs text-muted-foreground">{{ $t("settings.register.openingFloatHint") }}</p>
+              <fieldset class="space-y-2">
+                <legend class="text-sm font-medium">{{ $t("settings.register.printer") }}</legend>
+                <div class="flex flex-wrap items-center gap-2">
+                  <Select v-model="printerMode" :key="$i18n.locale">
+                    <SelectTrigger class="w-56"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="dialog">{{ $t("settings.register.printerDialog") }}</SelectItem>
+                      <SelectItem value="system">{{ $t("settings.register.printerSystem") }}</SelectItem>
+                      <SelectItem value="network">{{ $t("settings.register.printerNetwork") }}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select v-if="printerMode === 'system'" v-model="systemPrinter">
+                    <SelectTrigger class="w-64"><SelectValue :placeholder="$t('settings.register.pickPrinter')" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="p in printers" :key="p.systemName" :value="p.systemName">{{ p.name }}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    v-if="printerMode === 'network'"
+                    v-model="networkPrinter"
+                    dir="ltr"
+                    class="w-56"
+                    placeholder="192.168.1.50:9100"
+                    :aria-label="$t('settings.register.printerAddress')"
+                  />
+                  <Button v-if="printerTarget" type="button" variant="outline" @click="testPrint">{{ $t("settings.register.testPrint") }}</Button>
+                </div>
+                <p class="text-xs text-muted-foreground">
+                  {{ printerMode === "dialog" ? $t("settings.register.printerDialogHint") : $t("settings.register.printerDirectHint") }}
+                </p>
+                <p v-if="printerMode === 'system' && !printers.length" class="text-xs text-muted-foreground">{{ $t("settings.register.noPrinters") }}</p>
+                <p v-if="testMessage" role="status" class="text-sm">{{ testMessage }}</p>
+              </fieldset>
               <label class="flex items-center gap-3 text-sm">
                 <input v-model="register.autoPrint" type="checkbox" class="size-4 accent-primary" />
                 <span>
@@ -240,6 +308,13 @@ onMounted(async () => {
                 <span>
                   <span class="font-medium">{{ $t("settings.register.barcodeLookup") }}</span>
                   <span class="block text-muted-foreground">{{ $t("settings.register.barcodeLookupHint") }}</span>
+                </span>
+              </label>
+              <label class="flex items-center gap-3 text-sm">
+                <input v-model="register.blockExpired" type="checkbox" class="size-4 accent-primary" />
+                <span>
+                  <span class="font-medium">{{ $t("settings.register.blockExpired") }}</span>
+                  <span class="block text-muted-foreground">{{ $t("settings.register.blockExpiredHint") }}</span>
                 </span>
               </label>
               <div class="flex items-center gap-3">

@@ -17,7 +17,8 @@ export interface MediaFile {
 /** Image processing happens in Rust: the desktop app, or its dev bridge. */
 export const canUploadMedia = inDesktopApp || import.meta.env.DEV;
 
-export const ACCEPTED_IMAGE_TYPES = "image/jpeg,image/png,image/webp,image/gif,image/bmp";
+// HEIC (iPhone photos) is converted on macOS; elsewhere Rust says so
+export const ACCEPTED_IMAGE_TYPES = "image/jpeg,image/png,image/webp,image/gif,image/bmp,image/heic,image/heif,.heic,.heif";
 
 /** Sends the raw file to Rust, which converts it to WebP (q80) and computes a blurhash. */
 export const uploadMedia = async (file: File): Promise<MediaFile> => {

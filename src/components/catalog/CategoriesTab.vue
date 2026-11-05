@@ -24,6 +24,10 @@ import {
 import EditSheet from "@/components/EditSheet.vue";
 import AppIcon from "@/components/icons/AppIcon.vue";
 import IconPicker from "@/components/icons/IconPicker.vue";
+import ImageField from "@/components/media/ImageField.vue";
+import MediaImage from "@/components/media/MediaImage.vue";
+import { ImageIcon } from "lucide-vue-next";
+import type { MediaFile } from "@/lib/media";
 import { listCategories, type Category } from "@/db/catalog";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
@@ -77,6 +81,8 @@ const form = ref({
   name: "", description: "",
   parentId: "none", iconKey: null as string | null, color: null as string | null,
 });
+// Optional picture; the icon stays required (it's what small places show)
+const image = ref<MediaFile | null>(null);
 const saving = ref(false);
 const error = ref("");
 
@@ -88,12 +94,14 @@ const startCreate = (parent: Category | null = null) => {
     iconKey: null,
     color: parent ? null : COLORS[roots.value.length % COLORS.length],
   };
+  image.value = null;
   error.value = "";
   open.value = true;
 };
 
 const startEdit = (c: Category) => {
   editing.value = c;
+  image.value = c.image;
   form.value = {
     name: c.name,
     description: c.description ?? "",
@@ -126,7 +134,7 @@ const save = async () => {
     parentId: parent.value?.id ?? null,
     iconKey: form.value.iconKey,
     color: form.value.color,
-    imageMediaId: null,
+    imageMediaId: image.value?.id ?? null,
   };
   saving.value = true;
   error.value = "";
@@ -170,11 +178,12 @@ const save = async () => {
           >
             <CornerDownRight v-if="j > 0" :size="16" class="shrink-0 text-muted-foreground rtl:-scale-x-100" />
             <div
-              class="grid shrink-0 place-items-center rounded-lg"
+              class="grid shrink-0 place-items-center overflow-hidden rounded-lg"
               :class="j === 0 ? 'size-11' : 'size-9'"
               :style="{ background: categoryTint(c.color), color: categoryInk(c.color) }"
             >
-              <AppIcon :icon="c.icon_key" :size="j === 0 ? 24 : 20" />
+              <MediaImage v-if="c.image" :media="c.image" class="size-full" />
+              <AppIcon v-else :icon="c.icon_key" :size="j === 0 ? 24 : 20" />
             </div>
             <div class="min-w-0 flex-1">
               <div class="truncate" :class="j === 0 ? 'font-semibold' : 'font-medium'">
@@ -266,6 +275,11 @@ const save = async () => {
           </SelectContent>
         </Select>
         <p v-if="hasChildren" class="text-xs text-muted-foreground">{{ $t("catalog.hasChildrenHint") }}</p>
+      </div>
+
+      <div class="space-y-2">
+        <Label>{{ $t("catalog.image") }} <span class="font-normal text-muted-foreground">({{ $t("common.optional") }})</span></Label>
+        <ImageField v-model="image" :icon="ImageIcon" :hint="$t('catalog.imageHint')" />
       </div>
 
       <div class="space-y-2">

@@ -60,8 +60,10 @@ const qty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).repla
         </template>
         <dt class="pt-1 text-[1.3em] font-bold">{{ $t("pos.total") }}</dt>
         <dd class="pt-1 text-end text-[1.3em] font-bold">{{ formatCurrency(p.sale.total) }}</dd>
-        <dt>{{ $t(`pos.${p.sale.method}`) }}</dt>
-        <dd class="text-end">{{ formatCurrency(p.sale.tendered ?? p.sale.total) }}</dd>
+        <template v-for="(pay, i) in p.sale.payments" :key="i">
+          <dt>{{ $t(`pos.${pay.method}`) }}</dt>
+          <dd class="text-end">{{ formatCurrency(pay.tendered ?? pay.amount) }}</dd>
+        </template>
         <template v-if="p.sale.change">
           <dt>{{ $t("cash.change") }}</dt><dd class="text-end">{{ formatCurrency(p.sale.change) }}</dd>
         </template>

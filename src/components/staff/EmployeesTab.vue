@@ -2,7 +2,10 @@
 import DateInput from "@/components/pickers/DateInput.vue";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { KeyRound, Loader2, Pencil, Plus, Search } from "lucide-vue-next";
+import { KeyRound, Loader2, Pencil, Plus, Search, UserRound } from "lucide-vue-next";
+import ImageField from "@/components/media/ImageField.vue";
+import MediaImage from "@/components/media/MediaImage.vue";
+import type { MediaFile } from "@/lib/media";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -78,6 +81,7 @@ interface Form {
 const open = ref(false);
 const editing = ref<Employee | null>(null);
 const form = ref<Form>(blank());
+const photo = ref<MediaFile | null>(null);
 const saving = ref(false);
 const error = ref("");
 
@@ -92,6 +96,7 @@ function blank(): Form {
 const startCreate = () => {
   editing.value = null;
   form.value = blank();
+  photo.value = null;
   form.value.roleId = String(assignableRoles.value[assignableRoles.value.length - 1]?.id ?? "");
   error.value = "";
   open.value = true;
@@ -99,6 +104,7 @@ const startCreate = () => {
 
 const startEdit = (e: Employee) => {
   editing.value = e;
+  photo.value = e.photo;
   form.value = {
     fullName: e.full_name,
     username: e.username,
@@ -123,7 +129,7 @@ const save = async () => {
     username: f.username,
     roleId: Number(f.roleId),
     phone: f.phone || null,
-    photoMediaId: editing.value?.photo_media_id ?? null,
+    photoMediaId: photo.value?.id ?? null,
     hireDate: f.hireDate || null,
     wageAmount: f.wageAmount === "" ? null : Number(f.wageAmount),
     wagePeriod: f.wageAmount === "" ? null : f.wagePeriod,
@@ -200,10 +206,18 @@ const lastLogin = (iso: string | null) => (iso ? formatDateTime(new Date(iso)) :
           </TableRow>
           <TableRow v-for="e in visible" :key="e.id" :class="!e.is_active && 'opacity-60'">
             <TableCell class="ps-5">
-              <div class="font-medium">{{ e.full_name }}</div>
-              <div class="flex items-center gap-1.5 text-xs text-muted-foreground" dir="ltr">
-                <span>@{{ e.username }}</span>
-                <KeyRound v-if="e.has_pin" :size="12" :aria-label="$t('staff.hasPin')" />
+              <div class="flex items-center gap-3">
+                <span class="grid size-9 shrink-0 place-items-center overflow-hidden rounded-full bg-muted text-muted-foreground">
+                  <MediaImage v-if="e.photo" :media="e.photo" class="size-full" />
+                  <UserRound v-else :size="18" />
+                </span>
+                <div>
+                  <div class="font-medium">{{ e.full_name }}</div>
+                  <div class="flex items-center gap-1.5 text-xs text-muted-foreground" dir="ltr">
+                    <span>@{{ e.username }}</span>
+                    <KeyRound v-if="e.has_pin" :size="12" :aria-label="$t('staff.hasPin')" />
+                  </div>
+                </div>
               </div>
             </TableCell>
             <TableCell>{{ e.role_name }}</TableCell>
@@ -238,6 +252,7 @@ const lastLogin = (iso: string | null) => (iso ? formatDateTime(new Date(iso)) :
       :title="editing ? $t('staff.editEmployee') : $t('staff.addEmployee')"
       @submit="save"
     >
+      <ImageField v-model="photo" :icon="UserRound" round :hint="$t('staff.photoHint')" />
       <div class="space-y-2">
         <Label for="e-name">{{ $t("staff.fields.fullName") }}</Label>
         <Input id="e-name" v-model="form.fullName" required />

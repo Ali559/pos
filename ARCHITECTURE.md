@@ -2,7 +2,7 @@
 
 A desktop point-of-sale app for small shops. It runs offline on the till machine as a native window (Tauri), with a Vue 3 front end and a local SQLite database. The interface comes in Kurdish Sorani (default, right-to-left), Arabic (right-to-left) and English (left-to-right); each shop picks one at setup and keeps it.
 
-> Status: phases 1–5 of `PLAN.md` are in: SQLite data layer, one language per shop, Rust media pipeline, shop profile, sign-in (password or PIN), dynamic roles enforced in Rust, employees, shifts and schedules, the category tree and product editor with an offline icon library and barcode lookup, checkout with discounts, manager approval, cash change, returns, receipts and drawer counts, stock batches with expiry, alerts, expenses, and analytics with CSV export. `FEATURES.md` is the wider backlog.
+> Status: phases 1–6 of `PLAN.md` are in: SQLite data layer, one language per shop, Rust media pipeline, shop profile, sign-in (password or PIN), dynamic roles enforced in Rust, employees, shifts and schedules, the category tree and product editor with an offline icon library and barcode lookup, checkout with discounts, manager approval, cash change, holds, returns and exchanges (with or without a receipt), printed or direct-to-printer receipts and drawer counts, stock batches with expiry, alerts, expenses, and analytics with CSV export. `FEATURES.md` is the wider backlog.
 
 ## Stack
 
@@ -50,7 +50,7 @@ pos/
 │   │   ├── menus/                Sidebar (nav rail by permission, user menu), Header (shop, user, shift), NotificationBell
 │   │   ├── EditSheet.vue         Side panel used by every create/edit form
 │   │   ├── catalog/              CategoriesTab, ProductSheet (barcode-first editor), QuickAddTab (scan-and-next), ProductThumb, StockSheet
-│   │   ├── sales/                CashDialog, DiscountDialog, ManagerPinDialog, ReturnDialog, EndShiftDialog, PrintRoot (receipt)
+│   │   ├── sales/                CashDialog, DiscountDialog, ManagerPinDialog, ReturnDialog, EndShiftDialog, OpeningCashDialog, HeldSales, PrintRoot (receipt)
 │   │   ├── pickers/              DateInput, TimeInput (replace native date/time inputs)
 │   │   ├── expenses/             ExpensesTab, ExpenseTypesTab
 │   │   ├── reports/RangePicker.vue  Date presets + custom range, shared by Expenses and Analytics
@@ -85,7 +85,7 @@ pos/
 ├── scripts/build-icon-index.mjs  Regenerates icon-index.json from @tabler/icons metadata
 ├── tests/                        bun tests (icon suggestions)
 └── src-tauri/
-    ├── migrations/               0001_init … 0007_register
+    ├── migrations/               0001_init … 0008_register_more
     ├── seeds/demo.sql            Sample catalog (IQD), debug builds only
     ├── src/lib.rs                Builder: sql plugin + migrations, read pool, session, commands
     ├── src/commands.rs           The command list → #[tauri::command]s + dispatch() for the bridge
@@ -94,7 +94,8 @@ pos/
     ├── src/staff.rs              Roles and employees, anti-escalation rules
     ├── src/catalog.rs            Categories (tree, order, archive) and products (barcodes, photos, initial stock)
     ├── src/sales.rs              Checkout (prices from the database, discounts, cash change), void_line
-    ├── src/returns.rs            Returns and refunds against a sale
+    ├── src/returns.rs            Returns (with or without a receipt), shared with exchanges
+    ├── src/printing.rs           ESC/POS raster jobs to an installed or network printer
     ├── src/lookup.rs             Barcode lookup: catalog, then Open Food Facts
     ├── src/seeds.rs              Default names per language, demo catalog
     ├── src/stock.rs              Batches, receive/remove stock, soonest-expiry-first consumption
@@ -216,13 +217,18 @@ Seeded roles: **Owner** (system role, implicitly every permission, can't be edit
 
 - **Checkout** (`sales.rs`) receives product ids, quantities, discount amounts, the payment method and cash tendered; prices, costs, tax and stock come from the database. The cart discount is spread over the lines in proportion, so `sale_items.subtotal` is always after every discount and tax is charged on that. Discounts need `sales.discount` or a manager's override token; voids (`void_line`) need `sales.void_line` or one and are only audited, since the cart isn't stored. It refuses inactive products, fractional quantities of piece/pack/box items, and more than is on hand (naming the product). One transaction writes `sales` (with the cashier's open `shift_id`), `sale_items` (snapshotting name, price and cost), and `payments`. The existing trigger lowers stock and logs the movement. Receipt numbers are `R-000123`. IQD totals are rounded to whole dinars.
 - **Manager approval** (`auth::authorize_override`): another active user with the permission types their PIN; Rust keeps a single-use token for 5 minutes in the session state (cleared on sign-in/out) and the action passes it. Every attempt is audited; `sales.approved_by` / `returns.approved_by` record who approved.
-- **Returns** (`returns.rs`): per sale line, up to what's left after earlier returns. The refund is the line's charged amount pro rata plus its tax, and the last unit of a line refunds exactly the remainder. Optional restock (a batch with no expiry). The refund is a negative `payments` row tied to the return, and `sales.payment_status` becomes `partially_refunded`/`refunded`.
-- **Cash drawer**: a `cash_drawers` row per shift, opened with `opening_float`. `shift_summary` = float + cash payments − cash refunds of the shift (payments carry `shift_id`); `end_shift` stores the count and difference.
-- **Receipts**: `PrintRoot.vue` renders the sale into `#print-root` (Code 128 from `lib/code128.ts`); print CSS hides everything else and `print_receipt` asks the webview to print (`window.print()` in a browser). Width 58/80 mm and auto-print are settings.
+- **Returns** (`returns.rs`): with a receipt, per sale line, up to what's left after earlier returns; the refund is the line's charged amount pro rata plus its tax, and the last unit of a line refunds exactly the remainder. Without one, at today's price and tax rate (`original_sale_id`/`sale_item_id` NULL; `return_items` always names the product and its cost). Optional restock (a batch with no expiry). The refund is a negative `payments` row tied to the return, and `sales.payment_status` becomes `partially_refunded`/`refunded`. `prepare` → `write` → `pay_out` is shared with exchanges.
+- **Exchanges**: checkout's `exchange` writes the return in the same transaction. Its value pays for the sale first as `exchange` payments (+ on the sale, − on the return, netting to zero); the rest is paid normally, or a surplus is paid out with the chosen method. The register keeps the "coming back" list in `stores/returnCart.ts`.
+- **Holds**: `hold_sale` stores the register's cart as JSON in `held_sales`; `take_held_sale` deletes and returns it. Checkout re-prices everything, so a stale held cart can't sell at an old price.
+- **Cash drawer**: a `cash_drawers` row per shift, opened with `opening_float` until the cashier counts it (`count_opening_cash`, once; `opening_counted_at`). `shift_summary` = float + cash payments − cash refunds of the shift (payments carry `shift_id`); `end_shift` stores the count and difference.
+- **Receipts**: with no `receipt_printer`, `PrintRoot.vue` renders the sale into `#print-root` (Code 128 from `lib/code128.ts`); print CSS hides everything else and `print_receipt` asks the webview to print (`window.print()` in a browser). With one (`system:<name>` or `tcp:<host:port>`), `lib/receiptRaster.ts` draws the receipt on a canvas at 203 dpi (384/576 dots), packs it to 1 bit, and `print_raster` wraps it in ESC/POS (raster bands, cut, optional drawer kick) and sends it through the `printers` crate (CUPS/winspool, raw) or a TCP socket. Width 58/80 mm and auto-print are settings.
+- **Expired stock**: with `block_expired`, checkout refuses quantities only expired batches could cover and consumes fresh batches only.
 - **Batches** (`product_batches`): receiving stock adds a batch with optional expiry and cost; product creation records its opening stock as one. Sales and removals take from the soonest-expiring batch first. Stock older than batches is simply untracked for expiry; `products.stock_quantity` stays the count.
 - **Alerts** (`notifications.rs`): `refresh` recomputes every condition from the data — low stock (≤ reorder level), out of stock, batches expiring within `expiry_warn_days` (default 7) or expired, recurring-expense drafts — and reconciles the table: one open row per condition, closed (`resolved_at`) when it stops being true, hidden (`dismissed_at`) if dismissed. It runs after every stock change, at startup and hourly (`background.rs`). New out-of-stock and expired alerts also become OS notifications (`os_notifications` setting), in the UI language. The bell shows only kinds the user can act on.
 - **Expenses**: types with icons; amounts on local dates. A *repeating* expense is a template that produces a draft each week/month after its date; drafts appear as alerts and on the Expenses screen to confirm, edit or skip.
 - **Analytics** (`db/analytics.ts`) works from sale lines, so later product edits never change history. Return lines join the same `lines` CTE as negative quantities and amounts on the return's date (no `sale_id`, so they don't count as transactions); the payment split works on payment dates, refunds included. Buckets and the busiest-hours heatmap use the till's local time (`'localtime'`); weeks start Saturday. The compare toggle uses the same-length period just before. Hours worked come from shifts, clipped to the range. Net profit = gross margin − confirmed expenses, shown only without staff/category/payment filters. The filter bar lives in the route query.
+- **Sign-in throttling** (`auth.rs`): failures per `user:<name>` and one shared `pin` key in `auth_throttle`; 5 free, then 30 s doubling to 15 min. PIN approvals count too.
+- **Media cleanup** (`media::clean_unused`, hourly): unreferenced `media_files` rows older than a day, and stray files. HEIC uploads are converted with `sips` on macOS first.
 - **Export**: `save_csv` checks `analytics.export`, opens the save dialog in Rust (the WebView never supplies a path), and writes UTF-8 with a BOM so Excel shows Kurdish and Arabic.
 
 ## Developing in a browser: the dev bridge

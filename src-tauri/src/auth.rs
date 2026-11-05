@@ -159,8 +159,12 @@ pub async fn authorize_override(ctx: &Ctx, args: OverrideArgs) -> Result<Overrid
     if !OVERRIDABLE.contains(&args.permission.as_str()) {
         return Err(Error::Invalid(format!("{} can't be approved at the till", args.permission)));
     }
-    validate_pin(&args.pin).map_err(|_| Error::BadCredentials)?;
-    let approver = find_by_pin(ctx, &args.pin, Some(actor.user_id)).await?;
+    check_throttle(ctx, "pin").await?;
+    let approver = match validate_pin(&args.pin) {
+        Ok(()) => find_by_pin(ctx, &args.pin, Some(actor.user_id)).await?,
+        Err(_) => None,
+    };
+    record_attempt(ctx, "pin", approver.is_some()).await?;
     let granted = match approver {
         Some(id) => {
             let (role_id,): (i64,) = sqlx::query_as("SELECT role_id FROM users WHERE id = $1").bind(id).fetch_one(&ctx.pool).await?;
@@ -281,16 +285,71 @@ pub struct LoginArgs {
     pub password: String,
 }
 
+// ------------------------------------------------------------ throttling
+
+/// Wrong guesses allowed before a lockout, and how long the first lasts.
+/// Each further miss doubles it, up to `MAX_LOCK_SECS`.
+const FREE_ATTEMPTS: i64 = 5;
+const FIRST_LOCK_SECS: i64 = 30;
+const MAX_LOCK_SECS: i64 = 15 * 60;
+
+/// Refuses while `key` is locked out; the detail is the seconds left.
+async fn check_throttle(ctx: &Ctx, key: &str) -> Result<()> {
+    let row: Option<(Option<String>,)> = sqlx::query_as("SELECT locked_until FROM auth_throttle WHERE key = $1")
+        .bind(key)
+        .fetch_optional(&ctx.pool)
+        .await?;
+    if let Some((Some(until),)) = row {
+        if let Ok(until) = chrono::DateTime::parse_from_rfc3339(&until) {
+            let left = (until.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_seconds();
+            if left > 0 {
+                return Err(Error::RuleAbout("too_many_attempts", (left + 1).to_string()));
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn record_attempt(ctx: &Ctx, key: &str, ok: bool) -> Result<()> {
+    if ok {
+        sqlx::query("DELETE FROM auth_throttle WHERE key = $1").bind(key).execute(&ctx.pool).await?;
+        return Ok(());
+    }
+    let (failures,): (i64,) = sqlx::query_as(
+        "INSERT INTO auth_throttle (key, failures) VALUES ($1, 1)
+         ON CONFLICT(key) DO UPDATE SET failures = failures + 1
+         RETURNING failures",
+    )
+    .bind(key)
+    .fetch_one(&ctx.pool)
+    .await?;
+    if failures >= FREE_ATTEMPTS {
+        let secs = (FIRST_LOCK_SECS << (failures - FREE_ATTEMPTS).min(10)).min(MAX_LOCK_SECS);
+        let until = (chrono::Utc::now() + chrono::Duration::seconds(secs)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        sqlx::query("UPDATE auth_throttle SET locked_until = $1 WHERE key = $2").bind(until).bind(key).execute(&ctx.pool).await?;
+    }
+    Ok(())
+}
+
 pub async fn login(ctx: &Ctx, args: LoginArgs) -> Result<AuthStatus> {
+    let username = args.username.trim();
+    let key = format!("user:{}", username.to_lowercase());
+    check_throttle(ctx, &key).await?;
     let row: Option<(i64, String)> = sqlx::query_as(
         "SELECT id, password_hash FROM users WHERE username = $1 AND is_active = 1",
     )
-    .bind(args.username.trim())
+    .bind(username)
     .fetch_optional(&ctx.pool)
     .await?;
     match row {
-        Some((id, hash)) if verify_secret(&args.password, &hash) => sign_in(ctx, id, "password").await,
-        _ => Err(Error::BadCredentials),
+        Some((id, hash)) if verify_secret(&args.password, &hash) => {
+            record_attempt(ctx, &key, true).await?;
+            sign_in(ctx, id, "password").await
+        }
+        _ => {
+            record_attempt(ctx, &key, false).await?;
+            Err(Error::BadCredentials)
+        }
     }
 }
 
@@ -314,9 +373,15 @@ pub async fn find_by_pin(ctx: &Ctx, pin: &str, except_user: Option<i64>) -> Resu
         .map(|(id, _)| id))
 }
 
+/// PINs are short, so wrong ones are counted together for the whole till.
 pub async fn login_pin(ctx: &Ctx, args: PinArgs) -> Result<AuthStatus> {
-    validate_pin(&args.pin).map_err(|_| Error::BadCredentials)?;
-    match find_by_pin(ctx, &args.pin, None).await? {
+    check_throttle(ctx, "pin").await?;
+    let found = match validate_pin(&args.pin) {
+        Ok(()) => find_by_pin(ctx, &args.pin, None).await?,
+        Err(_) => None,
+    };
+    record_attempt(ctx, "pin", found.is_some()).await?;
+    match found {
         Some(id) => sign_in(ctx, id, "pin").await,
         None => Err(Error::BadCredentials),
     }
@@ -600,5 +665,26 @@ mod tests {
         assert!(validate_username("rebin.a").is_ok());
         assert!(validate_username("ربین").is_err());
         assert!(validate_password("12345").is_err());
+    }
+
+    #[test]
+    fn wrong_guesses_lock_sign_in_for_a_while() {
+        tauri::async_runtime::block_on(async {
+            let ctx = test_support::ctx().await;
+            setup_owner(&ctx).await;
+            logout(&ctx).await.unwrap();
+            for _ in 0..FREE_ATTEMPTS {
+                let r = login(&ctx, LoginArgs { username: "owner".into(), password: "nope".into() }).await;
+                assert!(matches!(r, Err(Error::BadCredentials)));
+            }
+            // Locked now, even with the right password
+            let r = login(&ctx, LoginArgs { username: "Owner".into(), password: "secret1".into() }).await;
+            assert!(matches!(r, Err(Error::RuleAbout("too_many_attempts", _))));
+            // Other usernames aren't affected
+            sqlx::query("UPDATE auth_throttle SET locked_until = NULL").execute(&ctx.pool).await.unwrap();
+            login(&ctx, LoginArgs { username: "owner".into(), password: "secret1".into() }).await.unwrap();
+            let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM auth_throttle").fetch_one(&ctx.pool).await.unwrap();
+            assert_eq!(n, 0, "a success clears the count");
+        });
     }
 }

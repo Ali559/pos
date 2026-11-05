@@ -10,7 +10,7 @@ use crate::audit;
 use crate::auth;
 use crate::ctx::{now, Ctx};
 use crate::error::{Error, Result};
-use crate::{notifications, shifts, stock};
+use crate::{notifications, returns, shifts, stock};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +35,13 @@ pub struct CheckoutArgs {
     pub tendered: Option<f64>,
     /// From `authorize_override`, when the cashier can't discount alone
     pub override_token: Option<String>,
+    /// Items coming back in the same transaction (an exchange): their value
+    /// pays for the sale first
+    #[serde(default)]
+    pub exchange: Option<returns::ReturnItems>,
+    /// Manager approval for the exchange's refund
+    #[serde(default)]
+    pub refund_override_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -48,6 +55,9 @@ pub struct SaleResult {
     pub total: f64,
     pub tendered: Option<f64>,
     pub change: Option<f64>,
+    /// Exchange: value of what came back, and what was paid back on top
+    pub returned: f64,
+    pub refunded: f64,
 }
 
 /// Dinar amounts have no useful fraction; other currencies keep cents.
@@ -119,6 +129,8 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     .await?;
     let currency = shop_currency(ctx).await?;
     let shift_id = shifts::shift_info(ctx, actor.user_id).await?.map(|s| s.id);
+    let today = stock::today();
+    let block_expired = crate::settings::get(ctx, "block_expired", "0").await? == "1";
 
     let mut tx = ctx.pool.begin().await?;
     let mut lines = Vec::new();
@@ -142,6 +154,9 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
         }
         if qty > on_hand {
             return Err(Error::RuleAbout("insufficient_stock", name));
+        }
+        if block_expired && qty > on_hand - stock::expired_quantity(&mut tx, product_id, &today).await? {
+            return Err(Error::RuleAbout("expired_stock", name));
         }
         let discount = round_money(discount, &currency);
         if discount > price * qty {
@@ -170,9 +185,19 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     let subtotal = round_money(lines.iter().map(|l| l.price * l.qty).sum(), &currency);
     let tax = round_money((subtotal - discount) * tax_rate / 100.0, &currency);
     let total = subtotal - discount + tax;
+
+    // An exchange: what comes back pays for the sale first; any surplus is
+    // paid back with the chosen method, any shortfall is paid with it
+    let exchange = match &args.exchange {
+        Some(items) => Some(returns::prepare(ctx, &mut tx, &actor, items, args.refund_override_token.as_deref(), &currency).await?),
+        None => None,
+    };
+    let returned = exchange.as_ref().map_or(0.0, |e| e.total);
+    let credit = returned.min(total);
+    let due = total - credit;
     let (tendered, change) = match (args.payment_method.as_str(), args.tendered) {
-        ("cash", Some(t)) if t < total => return Err(Error::Rule("tendered_short")),
-        ("cash", Some(t)) => (Some(t), Some(round_money(t - total, &currency))),
+        ("cash", Some(t)) if due > 0.0 && t < due => return Err(Error::Rule("tendered_short")),
+        ("cash", Some(t)) if due > 0.0 => (Some(t), Some(round_money(t - due, &currency))),
         _ => (None, None),
     };
     let at = now();
@@ -219,21 +244,43 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
         .bind(&at)
         .execute(&mut *tx)
         .await?;
-        stock::consume_batches(&mut tx, l.product_id, l.qty).await?;
+        stock::consume_batches(&mut tx, l.product_id, l.qty, block_expired.then_some(today.as_str())).await?;
     }
-    sqlx::query(
-        "INSERT INTO payments (sale_id, payment_method, amount, tendered, change_given, shift_id, payment_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
-    )
-    .bind(id)
-    .bind(&args.payment_method)
-    .bind(total)
-    .bind(tendered)
-    .bind(change)
-    .bind(shift_id)
-    .bind(&at)
-    .execute(&mut *tx)
-    .await?;
+    if due > 0.0 || exchange.is_none() {
+        sqlx::query(
+            "INSERT INTO payments (sale_id, payment_method, amount, tendered, change_given, shift_id, payment_date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(id)
+        .bind(&args.payment_method)
+        .bind(due)
+        .bind(tendered)
+        .bind(change)
+        .bind(shift_id)
+        .bind(&at)
+        .execute(&mut *tx)
+        .await?;
+    }
+    let mut refunded = 0.0;
+    if let Some(pending) = &exchange {
+        let return_id = returns::write(&mut tx, pending, actor.user_id, shift_id, "exchange", &at).await?;
+        // The credit moves from the return to the sale; nothing crosses the drawer
+        sqlx::query(
+            "INSERT INTO payments (sale_id, payment_method, amount, shift_id, return_id, payment_date)
+             VALUES ($1, 'exchange', $2, $3, $4, $5)",
+        )
+        .bind(id)
+        .bind(credit)
+        .bind(shift_id)
+        .bind(return_id)
+        .bind(&at)
+        .execute(&mut *tx)
+        .await?;
+        let original = items_sale(&args);
+        returns::pay_out(&mut tx, original, return_id, "exchange", credit, shift_id, &at).await?;
+        refunded = returned - credit;
+        returns::pay_out(&mut tx, original, return_id, &args.payment_method, refunded, shift_id, &at).await?;
+    }
     tx.commit().await?;
 
     audit::log(
@@ -246,7 +293,54 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     )
     .await?;
     notifications::refresh_quietly(ctx).await;
-    Ok(SaleResult { id, receipt_number, subtotal, discount, tax, total, tendered, change })
+    Ok(SaleResult { id, receipt_number, subtotal, discount, tax, total, tendered, change, returned, refunded })
+}
+
+fn items_sale(args: &CheckoutArgs) -> Option<i64> {
+    args.exchange.as_ref().and_then(|e| e.sale_id)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HoldArgs {
+    /// A name to find it by ("man in the blue coat"); optional
+    pub label: Option<String>,
+    /// The cart as the register keeps it. Prices are looked up again when
+    /// it's charged, so this is only what was on it.
+    pub cart: serde_json::Value,
+}
+
+/// Parks the current cart so the till can serve someone else.
+pub async fn hold_sale(ctx: &Ctx, args: HoldArgs) -> Result<i64> {
+    let actor = auth::require(ctx, "sales.sell").await?;
+    if !args.cart.is_object() && !args.cart.is_array() {
+        return Err(Error::Invalid("cart must be JSON".into()));
+    }
+    let label = args.label.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    Ok(sqlx::query("INSERT INTO held_sales (user_id, customer_name, sale_data, created_at) VALUES ($1, $2, $3, $4)")
+        .bind(actor.user_id)
+        .bind(label)
+        .bind(args.cart.to_string())
+        .bind(now())
+        .execute(&ctx.pool)
+        .await?
+        .last_insert_rowid())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HeldIdArgs {
+    pub id: i64,
+}
+
+/// Takes a parked cart off the list and returns it (resume), or just drops it.
+pub async fn take_held_sale(ctx: &Ctx, args: HeldIdArgs) -> Result<serde_json::Value> {
+    auth::require(ctx, "sales.sell").await?;
+    let row: Option<(String,)> = sqlx::query_as("DELETE FROM held_sales WHERE id = $1 RETURNING sale_data")
+        .bind(args.id)
+        .fetch_optional(&ctx.pool)
+        .await?;
+    let (data,) = row.ok_or(Error::NotFound)?;
+    Ok(serde_json::from_str(&data)?)
 }
 
 #[derive(Debug, Deserialize)]
@@ -300,6 +394,8 @@ pub mod tests {
             payment_method: method.into(),
             tendered: None,
             override_token: None,
+            exchange: None,
+            refund_override_token: None,
         }
     }
 
@@ -327,6 +423,8 @@ pub mod tests {
                 payment_method: "cash".into(),
                 tendered: Some(3000.0),
                 override_token: None,
+                exchange: None,
+                refund_override_token: None,
             })
             .await
             .unwrap();

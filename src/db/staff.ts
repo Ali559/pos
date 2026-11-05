@@ -1,3 +1,5 @@
+import { mediaColumns, takeMedia, type MediaColumns } from "./media";
+import type { MediaFile } from "@/lib/media";
 import { select } from "./client";
 
 export interface Permission {
@@ -22,6 +24,7 @@ export interface Employee {
   role_name: string;
   phone: string | null;
   photo_media_id: number | null;
+  photo: MediaFile | null;
   hire_date: string | null;
   wage_amount: number | null;
   wage_period: "hour" | "month" | null;
@@ -57,15 +60,22 @@ export const listRolePermissions = async (roleId: number) =>
   ).map((r) => r.permission_key);
 
 // Never selects password_hash / pin_hash
-export const listEmployees = () =>
-  select<Employee>(
+export const listEmployees = async (): Promise<Employee[]> => {
+  const rows = await select<Omit<Employee, "photo"> & MediaColumns>(
     `SELECT u.id, u.username, u.full_name, u.role_id,
             r.name AS role_name,
             u.phone, u.photo_media_id, u.hire_date, u.wage_amount, u.wage_period,
-            u.is_active, u.pin_hash IS NOT NULL AS has_pin, u.last_login
+            u.is_active, u.pin_hash IS NOT NULL AS has_pin, u.last_login,
+            ${mediaColumns("m")}
      FROM users u JOIN roles r ON r.id = u.role_id
+     LEFT JOIN media_files m ON m.id = u.photo_media_id
      ORDER BY u.is_active DESC, u.full_name`,
   );
+  return rows.map((row) => {
+    const [photo, rest] = takeMedia(row);
+    return { ...rest, photo };
+  });
+};
 
 /** Schedules starting in [from, to), as RFC 3339 UTC strings. */
 export const listSchedules = (from: string, to: string) =>

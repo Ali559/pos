@@ -13,6 +13,7 @@ mod export;
 mod lookup;
 mod media;
 mod notifications;
+mod printing;
 mod query;
 mod returns;
 mod sales;
@@ -64,6 +65,9 @@ pub fn run() {
             commands::logout,
             commands::end_shift,
             commands::shift_summary,
+            commands::count_opening_cash,
+            commands::list_printers,
+            commands::print_raster,
             commands::authorize_override,
             commands::set_setting,
             commands::save_shop_profile,
@@ -84,6 +88,8 @@ pub fn run() {
             commands::update_product,
             commands::checkout,
             commands::void_line,
+            commands::hold_sale,
+            commands::take_held_sale,
             commands::create_return,
             print_receipt,
             commands::receive_stock,

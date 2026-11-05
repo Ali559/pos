@@ -174,9 +174,9 @@ const reprint = (id: number) => printReceipt(id, { copy: true }).catch((e) => (e
             <div v-if="selected.discount" class="flex justify-between"><dt class="text-muted-foreground">{{ $t("receipt.discount") }}</dt><dd class="num">−{{ formatCurrency(selected.discount) }}</dd></div>
             <div v-if="selected.tax" class="flex justify-between"><dt class="text-muted-foreground">{{ $t("pos.tax") }}</dt><dd class="num">{{ formatCurrency(selected.tax) }}</dd></div>
             <div class="flex justify-between text-base font-semibold"><dt>{{ $t("pos.total") }}</dt><dd class="num">{{ formatCurrency(selected.total) }}</dd></div>
-            <div class="flex justify-between">
-              <dt class="text-muted-foreground">{{ $t(`pos.${selected.method}`) }}</dt>
-              <dd class="num">{{ formatCurrency(selected.tendered ?? selected.total) }}</dd>
+            <div v-for="(pay, i) in selected.payments" :key="i" class="flex justify-between">
+              <dt class="text-muted-foreground">{{ $t(`pos.${pay.method}`) }}</dt>
+              <dd class="num">{{ formatCurrency(pay.tendered ?? pay.amount) }}</dd>
             </div>
             <div v-if="selected.change" class="flex justify-between"><dt class="text-muted-foreground">{{ $t("cash.change") }}</dt><dd class="num">{{ formatCurrency(selected.change) }}</dd></div>
             <div v-if="selected.refunded" class="flex justify-between text-destructive"><dt>{{ $t("receipt.refunded") }}</dt><dd class="num">−{{ formatCurrency(selected.refunded) }}</dd></div>
