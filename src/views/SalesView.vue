@@ -778,7 +778,7 @@ onMounted(async () => {
         <span>{{ formatCurrency(Math.abs(net)) }}</span>
       </Button>
 
-      <div class="grid grid-cols-3 gap-2">
+      <div class="grid grid-cols-[1fr_auto_1fr] gap-2">
         <HeldSales
           :cart="heldCart"
           :can-hold="cartItems.length > 0 && !returns.active.value"
@@ -789,7 +789,7 @@ onMounted(async () => {
         <Button
           variant="outline"
           size="lg"
-          class="hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
+          class="min-w-0 px-3 hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
           :disabled="cartItems.length === 0"
           @click="clearCart"
         >

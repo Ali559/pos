@@ -98,7 +98,7 @@ export default {
     payWith: "Payment method",
     cash: "Cash",
     card: "Card",
-    hold: "Hold sale",
+    hold: "Hold",
     newSale: "New sale",
     saleDone: "Sale recorded",
     voidLine: "Remove from sale",

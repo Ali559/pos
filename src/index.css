@@ -1,26 +1,11 @@
 @import "@fontsource-variable/schibsted-grotesk";
 @import "@fontsource-variable/vazirmatn";
+@import "@fontsource-variable/noto-kufi-arabic";
 
 @import "tailwindcss";
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
-
-/* Kurdish and Arabic UI font; see src/assets/fonts/FONTS.md for licensing */
-@font-face {
-  font-family: "Rudaw";
-  src: url("./assets/fonts/rudaw-regular.ttf") format("truetype");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Rudaw";
-  src: url("./assets/fonts/rudaw-bold.ttf") format("truetype");
-  font-weight: 600 800;
-  font-style: normal;
-  font-display: swap;
-}
 
 * {
   user-select: none;
@@ -86,15 +71,16 @@ textarea {
 
   --font-sans:
     "Schibsted Grotesk Variable", "Segoe UI", system-ui, sans-serif;
-  /* Rudaw for the Kurdish and Arabic UI; Vazirmatn catches any glyph it
-     lacks. Rudaw has its own Latin letters, so English words inside
-     Kurdish/Arabic text are drawn in Rudaw too. */
+  /* Noto Kufi Arabic for Kurdish and Arabic script (it covers every Sorani
+     letter: ڕ ڵ ێ ۆ ە ڤ). Schibsted Grotesk comes first only because it has
+     no Arabic glyphs: Latin words and digits inside Kurdish/Arabic text then
+     match the English UI, and everything else falls through to Noto Kufi. */
   --font-kurdish:
-    "Rudaw", "Vazirmatn Variable", "Schibsted Grotesk Variable", system-ui,
-    sans-serif;
+    "Schibsted Grotesk Variable", "Noto Kufi Arabic Variable", "Vazirmatn Variable",
+    system-ui, sans-serif;
   --font-arabic:
-    "Rudaw", "Vazirmatn Variable", "Schibsted Grotesk Variable", system-ui,
-    sans-serif;
+    "Schibsted Grotesk Variable", "Noto Kufi Arabic Variable", "Vazirmatn Variable",
+    system-ui, sans-serif;
 
   --radius: 0.875rem;
 }

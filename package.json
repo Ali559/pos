@@ -12,6 +12,7 @@
     "icons:index": "bun scripts/build-icon-index.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/noto-kufi-arabic": "^5.3.0",
     "@fontsource-variable/schibsted-grotesk": "^5.3.0",
     "@fontsource-variable/vazirmatn": "^5.3.0",
     "@iconify-json/tabler": "^1.2.43",

@@ -99,7 +99,7 @@ export default {
     payWith: "شێوازی پارەدان",
     cash: "نەقد",
     card: "کارت",
-    hold: "ڕاگرتنی فرۆشتن",
+    hold: "ڕاگرتن",
     newSale: "فرۆشتنی نوێ",
     saleDone: "فرۆشتن تۆمارکرا",
     voidLine: "لابردن لە فرۆشتن",

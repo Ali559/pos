@@ -98,7 +98,7 @@ export default {
     payWith: "طريقة الدفع",
     cash: "نقدًا",
     card: "بطاقة",
-    hold: "تعليق البيع",
+    hold: "تعليق",
     newSale: "بيع جديد",
     saleDone: "تم تسجيل البيع",
     voidLine: "إزالة من البيع",

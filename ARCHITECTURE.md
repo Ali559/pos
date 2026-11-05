@@ -12,7 +12,7 @@ A desktop point-of-sale app for small shops. It runs offline on the till machine
 | UI framework | Vue 3.5, `<script setup>` + TypeScript | Single-page app mounted in `index.html`. |
 | Build | Vite 6 + `bun` | Dev server on fixed port `1420` (Tauri requires it). |
 | Styling | Tailwind CSS v4 (`@tailwindcss/vite`) | Design tokens are CSS variables in `src/index.css`, mapped into Tailwind with `@theme inline`. |
-| Fonts | Schibsted Grotesk, Vazirmatn (`@fontsource-variable`), Rudaw (bundled, see `src/assets/fonts/FONTS.md`) | Self-hosted so the till renders correctly offline. |
+| Fonts | Schibsted Grotesk, Noto Kufi Arabic, Vazirmatn (`@fontsource-variable`, SIL Open Font License) | Self-hosted so the till renders correctly offline. |
 | Components | shadcn-vue (new-york style) on reka-ui | Copied into `src/components/ui/`; edit them freely, they are owned code. |
 | UI icons | lucide-vue-next | Interface chrome (buttons, nav). |
 | Catalog icons | Tabler via `@iconify-json/tabler` + `@iconify/vue/offline` | Categories and products; drawn offline, never fetched. |
@@ -160,7 +160,7 @@ Errors cross the boundary as `{ code, message, detail? }`. The UI shows `errors.
 
 Language is the setting; direction follows from the `languages` table in `src/utils/i18n/index.ts` (`ku`/`ar` → rtl, `en` → ltr). `LocaleProvider` sets the vue-i18n locale, writes `lang`/`dir` on `<html>`, and saves the choice with `set_setting("language")`. The shop picks it on the setup screen and it is locked after that: Rust refuses `language` once an owner exists, because every name in the shop (products, categories, roles, expense types) is stored once, in that language. `localStorage` only caches it for the first paint.
 
-Fonts follow the language: `:lang(ku)` and `:lang(ar)` Rudaw with Vazirmatn fallback, `:lang(en)` Schibsted Grotesk. Inputs whose content is always one script set their own `lang`/`dir`. Default roles and expense types are renamed into the shop's language at setup (`seeds.rs`).
+Fonts follow the language: `:lang(ku)` and `:lang(ar)` use Noto Kufi Arabic for Arabic script (it covers every Sorani letter; most Google Arabic fonts such as Cairo, Alexandria or Readex Pro lack ڕ ڵ ێ ۆ ە) with Schibsted Grotesk in front for Latin and digits, and Vazirmatn as a last fallback; `:lang(en)` Schibsted Grotesk. Inputs whose content is always one script set their own `lang`/`dir`. Default roles and expense types are renamed into the shop's language at setup (`seeds.rs`).
 
 Chromium (and so WebView2 on Windows) has no Sorani locale data. `src/lib/locale.ts` detects that and uses Arabic-Iraq number rules plus hand-written Kurdish month and weekday names. Digits stay Western everywhere for now.
 

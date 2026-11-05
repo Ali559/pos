@@ -82,7 +82,7 @@ const take = async (id: number, resume: boolean) => {
   <div class="contents">
     <Popover v-model:open="holdOpen">
       <PopoverTrigger as-child>
-        <Button variant="outline" size="lg" :disabled="!canHold">
+        <Button variant="outline" size="lg" class="min-w-0 px-3" :disabled="!canHold">
           <PauseCircle />
           {{ $t("pos.hold") }}
         </Button>
@@ -99,9 +99,16 @@ const take = async (id: number, resume: boolean) => {
 
     <Popover v-model:open="listOpen">
       <PopoverTrigger as-child>
-        <Button variant="outline" size="lg" :disabled="!rows.length">
+        <Button
+          variant="outline"
+          size="lg"
+          class="num px-3"
+          :disabled="!rows.length"
+          :aria-label="$t('held.count', { n: rows.length })"
+          :title="$t('held.count', { n: rows.length })"
+        >
           <Clock />
-          {{ $t("held.count", { n: rows.length }) }}
+          {{ rows.length }}
         </Button>
       </PopoverTrigger>
       <PopoverContent class="w-96 p-0" align="end">

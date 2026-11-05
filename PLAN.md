@@ -334,7 +334,7 @@ Done 2026-11-05 (the "left for later" money items plus a round of requests).
 
 - **One language per shop.** Setup asks for Kurdish, Arabic or English first; it's locked afterwards (`set_setting("language")` refuses once set up) and every name is stored once, in that language. Migration `0006` folds the `name_ku`/`name_ar`/`name_en` columns into `name` using the shop's language; the language switcher is gone.
 - **Starter categories.** Setup asks for the shop type (mini market, supermarket, other) and offers the usual categories with icons, in all three languages (`src/data/starterCategories.ts`); all ticked by default.
-- **Rudaw** font for Kurdish and Arabic (bundled; proprietary, see `src/assets/fonts/FONTS.md`).
+- **Rudaw** font for Kurdish and Arabic. *(Replaced on 2026-11-05 by Noto Kufi Arabic from Google Fonts: same geometric Kufi style, open license, cleaner rendering.)*
 - **Date and time pickers** (`components/pickers/`) replace the native inputs everywhere: themed, Saturday-first, in the UI language.
 - **Barcode-first products.** The product form starts at the barcode; a known barcode opens that product, an unknown one is looked up on Open Food Facts (name, brand, size, photo, category guess) when online and the `barcode_lookup` setting is on. **Quick add** (Inventory tab) is scan → price → Enter → next, receiving stock for known items.
 - **Discounts** per line and on the whole sale, spread into the sale lines so returns and reports see them. Without `sales.discount`, a manager's PIN approves (`authorize_override` → single-use token, 5 minutes, audited).
