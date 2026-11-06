@@ -112,18 +112,27 @@ Built 2026-11-07 (migration `0012`, `src-tauri/src/suppliers.rs` and `stockcount
 - **Money stays right**: payments to suppliers from the till are negative cash payments, so expected cash at end of shift goes down and they're shown on their own line; they're kept out of the sales payment split in analytics.
 - **Permissions**: `suppliers.view`, `suppliers.edit` (suppliers, receiving from them), `suppliers.pay` (dangerous: paying and adjusting) for Manager; `inventory.count` for Manager and Cashier. Applying a count needs `inventory.adjust_stock`.
 
-## 11. Pricing and promotions ⬜
+## 11. Pricing and promotions ✅
 
-| Item | Size | Notes |
+Built 2026-11-07 (migration `0013`, `src-tauri/src/pricing.rs`, `src/lib/pricing.ts`). A promotion and the wholesale switch were checked at the till in the app; nothing was sold with them yet.
+
+| Item | Size | Status |
 | --- | --- | --- |
-| Price levels | M | Retail and wholesale (and more if needed); a customer can be set to a level; the cashier can switch level for a sale with permission. |
-| Quantity prices | S | Cheaper per item from N items (e.g. 3+). |
-| Promotions | M | Buy X get Y, N for a fixed price, percent off a product or category; start and end dates; shown on the receipt and reported like discounts. |
-| Tax-free items | S | Tax is shop-wide today; a per-product (or per-category) tax class. |
-| Bulk price edit | S | Raise/lower prices by % or amount for a category or a selection, with a preview. |
-| Price history | S | Every price and cost change recorded, shown on the product. |
+| Price levels | M | ✅ retail + wholesale |
+| Quantity prices | S | ✅ |
+| Promotions | M | ✅ |
+| Tax-free items | S | ✅ per product |
+| Bulk price edit | S | ✅ |
+| Price history | S | ✅ |
 
----
+**How it works**
+- **Wholesale.** Products can have a wholesale price (blank = same as retail). The register has a *Retail / Wholesale* switch; a customer can be set to wholesale so their sales start there. Selling at wholesale needs `sales.wholesale` or a manager's PIN, and the sale remembers its level. Packs keep their own price at both levels.
+- **Quantity prices.** "From 6, 700 each": retail only, the cheapest tier the line's quantity reaches, never above the normal price. Repeated lines of the same product are added up first, so two scans of 3 count as 6.
+- **Promotions** (Inventory → Promotions): *percent off*, *buy X get Y free* or *N for a price*, on products and/or whole categories (a parent category covers its subcategories), with optional start/end dates. Checkout gives each line the best promotion running today; no discount permission is needed. They apply to retail sales of single items, not packs, scale labels or typed prices. The receipt and sales history show the promotion's name and amount; `sale_items.promo_discount` keeps it apart from discounts someone gave. A used promotion is switched off instead of deleted.
+- **Tax-free products**: tax is worked out only on the taxable lines; returns use each line's own rate.
+- **Bulk price change** (Inventory → *Change prices*): raises or lowers every product the current filter shows by a percentage or an amount, rounded to 50/100/250/500/1000 or not, with a preview of every new price first. Permission `catalog.bulk_prices` (dangerous).
+- **Price history**: every change to price, wholesale price or cost (from editing, a bulk change or a delivery) is recorded with who and when, and listed in the product form.
+- **One set of rules in two places.** Rust (checkout) is what's charged; `src/lib/pricing.ts` mirrors it for the register's preview, with the same test cases on both sides (`tests/pricing.test.ts`, `sales::tests::wholesale_quantity_prices_promotions_and_tax_free`).
 
 ## 12. Catalog upkeep ⬜
 

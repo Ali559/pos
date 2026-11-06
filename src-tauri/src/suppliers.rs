@@ -302,6 +302,7 @@ pub async fn receive_delivery(ctx: &Ctx, args: DeliveryArgs) -> Result<DeliveryR
             None
         };
         // Last cost: what this delivery cost
+        crate::pricing::record_changes(&mut tx, l.product_id, None, None, Some(l.cost), "delivery", actor.user_id).await?;
         sqlx::query("UPDATE products SET cost_price = $1 WHERE id = $2").bind(l.cost).bind(l.product_id).execute(&mut *tx).await?;
         sqlx::query(
             "INSERT INTO delivery_items (delivery_id, product_id, batch_id, quantity, cost, unit_name, unit_factor, expiry_date)

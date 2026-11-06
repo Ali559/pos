@@ -35,6 +35,8 @@ import WeightDialog from "@/components/sales/WeightDialog.vue";
 import OpenPriceDialog from "@/components/sales/OpenPriceDialog.vue";
 import PriceCheckDialog from "@/components/sales/PriceCheckDialog.vue";
 import { baseQuantity, lineGross, normalizeItem, quantityLabel, type CartItem } from "@/lib/cart";
+import { priceCart, type PriceLevel, type Promo } from "@/lib/pricing";
+import { runningPromotions } from "@/db/promotions";
 import type { ScanResult } from "@/lib/scan";
 import { getSetting } from "@/db/settings";
 import { printReceipt } from "@/lib/print";
@@ -89,8 +91,13 @@ const pickerOpen = ref(false);
 const canAccount = computed(() => auth.can("customers.credit"));
 const pickCustomer = (c: Customer) => {
   customer.value = c;
+  // A wholesale customer's sale starts at wholesale prices
+  priceLevel.value = c.price_level;
   focusScan();
 };
+// Retail or wholesale prices for this sale; promotions (running today)
+const priceLevel = ref<PriceLevel>("retail");
+const promos = ref<Promo[]>([]);
 const autoPrint = ref(false);
 const returns = useReturnCart();
 // Scans go to the items coming back instead of the cart
@@ -150,12 +157,26 @@ const itemCount = computed(() =>
 );
 // Mirrors the Rust totals (sales::checkout), which are what gets charged
 const roundMoney = (n: number) => (currency.value === "IQD" ? Math.round(n) : Math.round(n * 100) / 100);
-const gross = (i: CartItem) => lineGross(i, roundMoney);
-const subtotal = computed(() => cartItems.value.reduce((sum, i) => sum + gross(i), 0));
+// Priced the way checkout prices it (src/lib/pricing.ts mirrors sales.rs)
+const productMap = computed(() => new Map(products.value.map((p) => [p.id, p])));
+const priced = computed(() =>
+  priceCart(cartItems.value, productMap.value, {
+    level: priceLevel.value,
+    promos: promos.value,
+    cartDiscount: cartDiscount.value,
+    taxRate: taxRate.value,
+    currency: currency.value,
+  }),
+);
+const lineOf = (i: CartItem) => priced.value.lines[cartItems.value.indexOf(i)];
+const gross = (i: CartItem) => lineOf(i)?.gross ?? lineGross(i, roundMoney);
+const promoOf = (i: CartItem) => lineOf(i)?.promo ?? 0;
+const eachOf = (i: CartItem) => lineOf(i)?.each || i.price;
+const subtotal = computed(() => priced.value.subtotal);
 const lineDiscounts = computed(() => cartItems.value.reduce((sum, i) => sum + i.discount, 0));
-const discount = computed(() => lineDiscounts.value + cartDiscount.value);
-const tax = computed(() => roundMoney(((subtotal.value - discount.value) * taxRate.value) / 100));
-const total = computed(() => roundMoney(subtotal.value - discount.value) + tax.value);
+const discount = computed(() => priced.value.discount);
+const tax = computed(() => priced.value.tax);
+const total = computed(() => priced.value.total);
 const returnValue = computed(() => returns.total(currency.value));
 // What the customer pays (positive) or gets back (negative)
 const net = computed(() => (cartItems.value.length ? total.value : 0) - returnValue.value);
@@ -375,6 +396,7 @@ const resetCart = () => {
   cartItems.value = [];
   cartDiscount.value = 0;
   customer.value = null;
+  priceLevel.value = "retail";
   if (payment.value === "account") payment.value = "cash";
   focusScan();
 };
@@ -414,7 +436,7 @@ const editLineDiscount = async (item: CartItem) => {
 const editCartDiscount = async () => {
   const n = await discountDialog.value?.ask({
     title: t("discount.wholeSale"),
-    base: subtotal.value - lineDiscounts.value,
+    base: subtotal.value - lineDiscounts.value - priced.value.promotions,
     current: cartDiscount.value,
   });
   if (n != null) cartDiscount.value = roundMoney(n);
@@ -457,8 +479,11 @@ const checkout = async () => {
     tendered = (await cashDialog.value?.ask(net.value)) ?? null;
     if (tendered === null) return focusScan();
   }
-  const overrideToken = discount.value > 0 ? await approve("sales.discount") : null;
+  // Promotions need no approval; discounts someone gives do
+  const overrideToken = priced.value.manual > 0 ? await approve("sales.discount") : null;
   if (overrideToken === undefined) return focusScan();
+  const wholesaleOverrideToken = priceLevel.value === "wholesale" ? await approve("sales.wholesale") : null;
+  if (wholesaleOverrideToken === undefined) return focusScan();
   const refundOverrideToken = returns.active.value ? await approve("sales.refund") : null;
   if (refundOverrideToken === undefined) return focusScan();
   const openPriceOverrideToken = cartItems.value.some((i) => i.openPrice !== null) ? await approve("sales.open_price") : null;
@@ -485,6 +510,8 @@ const checkout = async () => {
       exchange: returns.active.value ? returns.payload() : null,
       refundOverrideToken,
       openPriceOverrideToken,
+      priceLevel: priceLevel.value,
+      wholesaleOverrideToken,
     });
     lastSale.value = { kind: "sale", sale };
     resetCart();
@@ -537,12 +564,14 @@ onMounted(async () => {
     })
     .catch(() => {});
   if (returns.active.value) returnMode.value = returns.saleId.value === null;
-  const [cats, prods, , auto] = await Promise.all([
+  const [cats, prods, , auto, running] = await Promise.all([
     listCategories(),
     listProducts(),
     loadShop(),
     getSetting("auto_print"),
+    runningPromotions().catch(() => []),
   ]);
+  promos.value = running;
   categories.value = cats;
   products.value = prods;
   autoPrint.value = auto === "1";
@@ -743,9 +772,17 @@ onMounted(async () => {
               <History :size="15" /> {{ $t("history.title") }}
             </RouterLink>
           </div>
-          <p class="text-sm text-muted-foreground">
-            {{ $t("pos.items", itemCount) }}
-          </p>
+          <div class="flex items-center justify-between gap-2">
+            <p class="text-sm text-muted-foreground">
+              {{ $t("pos.items", itemCount) }}
+            </p>
+            <!-- Retail or wholesale prices for this sale -->
+            <div class="grid grid-cols-2 gap-0.5 rounded-md bg-muted p-0.5 text-xs" role="radiogroup" :aria-label="$t('pricing.level')">
+              <button v-for="l in ['retail', 'wholesale'] as const" :key="l" type="button" role="radio" :aria-checked="priceLevel === l"
+                class="rounded px-2 py-0.5 font-medium text-muted-foreground aria-checked:bg-card aria-checked:text-foreground aria-checked:shadow-sm"
+                @click="priceLevel = l">{{ $t(`pricing.levels.${l}`) }}</button>
+            </div>
+          </div>
           <!-- Who's buying: optional, needed for on account -->
           <div v-if="customer" class="mt-2 flex items-center gap-2 rounded-lg bg-muted px-2.5 py-1.5 text-sm">
             <UserRound :size="15" class="shrink-0 text-muted-foreground" />
@@ -850,12 +887,15 @@ onMounted(async () => {
                 <bdi>{{ item.name }}</bdi>
               </span>
               <span class="text-end">
-                <span class="num block font-semibold">{{ formatCurrency(gross(item) - item.discount) }}</span>
-                <span v-if="item.discount" class="num block text-xs text-muted-foreground line-through">{{
+                <span class="num block font-semibold">{{ formatCurrency(gross(item) - item.discount - promoOf(item)) }}</span>
+                <span v-if="item.discount || promoOf(item)" class="num block text-xs text-muted-foreground line-through">{{
                   formatCurrency(gross(item))
                 }}</span>
               </span>
             </div>
+            <p v-if="promoOf(item)" class="mt-0.5 text-xs font-medium text-success">
+              <bdi>{{ lineOf(item)?.promoName }}</bdi> −{{ formatCurrency(promoOf(item)) }}
+            </p>
             <div class="mt-1.5 flex items-center gap-1">
               <!-- A scale label's weight is fixed; other lines step or re-weigh -->
               <template v-if="!item.scaleBarcode">
@@ -899,7 +939,7 @@ onMounted(async () => {
                 <option v-for="u in productOf(item.id)!.units" :key="u.id" :value="u.id">{{ u.name }} ({{ u.factor }})</option>
               </select>
               <span v-if="item.amount === null" class="num ms-2 text-xs text-muted-foreground"
-                >× {{ formatCurrency(item.price) }}</span
+                >× {{ formatCurrency(eachOf(item)) }}</span
               >
               <button
                 type="button"

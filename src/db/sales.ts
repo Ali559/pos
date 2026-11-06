@@ -52,6 +52,9 @@ export interface SaleLine {
   /** Sold by the pack: its name and size (quantity is still in the product's unit) */
   unit_name: string | null;
   unit_factor: number | null;
+  /** The promotion the line got; its amount is part of `discount` */
+  promotion_name: string | null;
+  promo_discount: number;
 }
 
 /** "Carton × 2" for a pack line, or the quantity; and the price of one of those */
@@ -114,7 +117,7 @@ export const getSale = async (id: number): Promise<SaleDetail | null> => {
     select<SaleLine>(
       `SELECT si.id, si.product_id, si.product_name AS name, si.quantity, si.unit_price,
               COALESCE(si.discount_amount, 0) AS discount, si.subtotal, COALESCE(si.tax_rate, 0) AS tax_rate,
-              COALESCE(p.unit, 'piece') AS unit, si.unit_name, si.unit_factor,
+              COALESCE(p.unit, 'piece') AS unit, si.unit_name, si.unit_factor, si.promotion_name, COALESCE(si.promo_discount, 0) AS promo_discount,
               (SELECT COALESCE(SUM(quantity), 0) FROM return_items WHERE sale_item_id = si.id) AS returned
        FROM sale_items si LEFT JOIN products p ON p.id = si.product_id
        WHERE si.sale_id = $1 ORDER BY si.id`,

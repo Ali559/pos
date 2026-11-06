@@ -69,6 +69,12 @@ pub struct CheckoutArgs {
     /// Manager approval for going over the customer's credit limit
     #[serde(default)]
     pub over_limit_override_token: Option<String>,
+    /// retail (default) | wholesale
+    #[serde(default)]
+    pub price_level: Option<String>,
+    /// Manager approval for a wholesale sale
+    #[serde(default)]
+    pub wholesale_override_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -87,6 +93,8 @@ pub struct SaleResult {
     pub refunded: f64,
     /// Left on the customer's account
     pub on_account: f64,
+    /// Taken off by promotions (part of `discount`)
+    pub promotions: f64,
 }
 
 /// Dinar amounts have no useful fraction; other currencies keep cents.
@@ -132,6 +140,10 @@ struct Line {
     /// Sold by the pack: its name and size, as a snapshot
     unit: Option<(String, f64)>,
     tracked: bool,
+    /// Taken off by a promotion (kept apart from `discount`, the manual one)
+    promo: f64,
+    promotion: Option<(i64, String)>,
+    tax_exempt: bool,
 }
 
 pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
@@ -189,21 +201,34 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
         }
     }
 
+    let level = args.price_level.as_deref().unwrap_or("retail");
+    if !matches!(level, "retail" | "wholesale") {
+        return Err(Error::Invalid(format!("unknown price level {level}")));
+    }
+    let wholesale_by = if level == "wholesale" {
+        auth::require_or_override(ctx, &actor, "sales.wholesale", args.wholesale_override_token.as_deref()).await?
+    } else {
+        None
+    };
+
     let mut tx = ctx.pool.begin().await?;
     let mut lines = Vec::new();
     let mut typed_price = false;
     for line in &merged {
-        let row: Option<(String, f64, f64, bool, String, bool, bool, Option<String>)> = sqlx::query_as(
+        #[allow(clippy::type_complexity)]
+        let row: Option<(String, f64, f64, bool, String, bool, bool, Option<String>, Option<f64>, bool)> = sqlx::query_as(
             "SELECT name, CAST(selling_price AS REAL), CAST(cost_price AS REAL), is_active, unit,
-                    open_price, track_stock, plu
+                    open_price, track_stock, plu, CAST(wholesale_price AS REAL), tax_exempt
              FROM products WHERE id = $1",
         )
         .bind(line.product_id)
         .fetch_optional(&mut *tx)
         .await?;
-        let Some((name, price, cost, active, unit, open_price, tracked, plu)) = row else {
+        let Some((name, price, cost, active, unit, open_price, tracked, plu, wholesale, tax_exempt)) = row else {
             return Err(Error::NotFound);
         };
+        let mut promo = 0.0;
+        let mut promotion = None;
         if !active {
             return Err(Error::RuleAbout("product_unavailable", name));
         }
@@ -246,7 +271,17 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
             if open_price {
                 return Err(Error::RuleAbout("price_required", name));
             }
-            let gross = if whole { price * line.quantity } else { round_money(price * line.quantity, &currency) };
+            // Wholesale, or retail with a cheaper price from a quantity
+            let each = crate::pricing::unit_price(&mut tx, line.product_id, price, wholesale, level, line.quantity).await?;
+            let gross = if whole { each * line.quantity } else { round_money(each * line.quantity, &currency) };
+            // Promotions are for retail sales of single items
+            if level == "retail" {
+                let promos = crate::pricing::promotions_for(&mut tx, line.product_id, &today).await?;
+                if let Some((p, off)) = crate::pricing::best_promotion(&promos, line.quantity, each, &currency) {
+                    promo = off.min(gross);
+                    promotion = Some((p.id, p.name));
+                }
+            }
             (line.quantity, gross, None, name)
         };
         if !(qty > 0.0) {
@@ -256,10 +291,10 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
             return Err(Error::RuleAbout("quantity_whole", name));
         }
         let discount = round_money(line.discount, &currency);
-        if discount > gross {
+        if discount + promo > gross + 1e-9 {
             return Err(Error::RuleAbout("discount_too_large", name));
         }
-        lines.push(Line { product_id: line.product_id, name, qty, gross, cost, discount, unit: pack, tracked });
+        lines.push(Line { product_id: line.product_id, name, qty, gross, cost, discount, unit: pack, tracked, promo, promotion, tax_exempt });
     }
     if typed_price {
         auth::require_or_override(ctx, &actor, "sales.open_price", args.open_price_override_token.as_deref()).await?;
@@ -287,22 +322,28 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     // The cart discount is spread over the lines by what's left of each,
     // so every sale line carries its full discount (reports, returns)
     let cart_discount = round_money(args.cart_discount, &currency);
-    let nets: Vec<f64> = lines.iter().map(|l| l.gross - l.discount).collect();
+    let nets: Vec<f64> = lines.iter().map(|l| l.gross - l.discount - l.promo).collect();
     if cart_discount > nets.iter().sum::<f64>() {
         return Err(Error::Rule("discount_too_large"));
     }
     for (l, share) in lines.iter_mut().zip(allocate(cart_discount, &nets, &currency)) {
         l.discount += share;
     }
-    let discount: f64 = lines.iter().map(|l| l.discount).sum();
-    let approved_by = if discount > 0.0 {
+    // Only discounts someone gave need approval; promotions don't
+    let manual: f64 = lines.iter().map(|l| l.discount).sum();
+    let promotions: f64 = lines.iter().map(|l| l.promo).sum();
+    let discount = manual + promotions;
+    let approved_by = if manual > 0.0 {
         auth::require_or_override(ctx, &actor, "sales.discount", args.override_token.as_deref()).await?
     } else {
         None
-    };
+    }
+    .or(wholesale_by);
 
     let subtotal = round_money(lines.iter().map(|l| l.gross).sum(), &currency);
-    let tax = round_money((subtotal - discount) * tax_rate / 100.0, &currency);
+    // Tax-free products aren't taxed
+    let taxable: f64 = lines.iter().filter(|l| !l.tax_exempt).map(|l| l.gross - l.discount - l.promo).sum();
+    let tax = round_money(taxable * tax_rate / 100.0, &currency);
     let total = subtotal - discount + tax;
 
     // An exchange: what comes back pays for the sale first; any surplus is
@@ -336,8 +377,8 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
 
     let placeholder = format!("tmp-{}", uuid::Uuid::new_v4());
     let id = sqlx::query(
-        "INSERT INTO sales (receipt_number, sale_date, user_id, shift_id, subtotal, discount_amount, tax_amount, total_amount, approved_by, customer_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $2)",
+        "INSERT INTO sales (receipt_number, sale_date, user_id, shift_id, subtotal, discount_amount, tax_amount, total_amount, approved_by, customer_id, price_level, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $2)",
     )
     .bind(&placeholder)
     .bind(&at)
@@ -349,6 +390,7 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     .bind(total)
     .bind(approved_by)
     .bind(args.customer_id)
+    .bind(level)
     .execute(&mut *tx)
     .await?
     .last_insert_rowid();
@@ -363,8 +405,8 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
         // The after_sale_item_insert trigger takes the stock down and logs it
         sqlx::query(
             "INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, cost_price, tax_rate, discount_amount, subtotal,
-                unit_name, unit_factor, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                unit_name, unit_factor, promotion_id, promotion_name, promo_discount, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
         )
         .bind(id)
         .bind(l.product_id)
@@ -372,11 +414,14 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
         .bind(l.qty)
         .bind(l.gross / l.qty)
         .bind(l.cost)
-        .bind(tax_rate)
-        .bind(l.discount)
-        .bind(l.gross - l.discount)
+        .bind(if l.tax_exempt { 0.0 } else { tax_rate })
+        .bind(l.discount + l.promo)
+        .bind(l.gross - l.discount - l.promo)
         .bind(l.unit.as_ref().map(|u| u.0.as_str()))
         .bind(l.unit.as_ref().map(|u| u.1))
+        .bind(l.promotion.as_ref().map(|p| p.0))
+        .bind(l.promotion.as_ref().map(|p| p.1.as_str()))
+        .bind(l.promo)
         .bind(&at)
         .execute(&mut *tx)
         .await?;
@@ -454,7 +499,7 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     )
     .await?;
     notifications::refresh_quietly(ctx).await;
-    Ok(SaleResult { id, receipt_number, subtotal, discount, tax, total, tendered, change, returned, refunded, on_account })
+    Ok(SaleResult { id, receipt_number, subtotal, discount, tax, total, tendered, change, returned, refunded, on_account, promotions })
 }
 
 fn items_sale(args: &CheckoutArgs) -> Option<i64> {
@@ -563,6 +608,8 @@ pub mod tests {
             customer_id: None,
             on_account: 0.0,
             over_limit_override_token: None,
+            price_level: None,
+            wholesale_override_token: None,
         }
     }
 
@@ -675,6 +722,84 @@ pub mod tests {
     }
 
     #[test]
+    fn wholesale_quantity_prices_promotions_and_tax_free() {
+        tauri::async_runtime::block_on(async {
+            let ctx = test_support::ctx().await;
+            setup_owner(&ctx).await;
+            crate::settings::set_setting(&ctx, crate::settings::SetSettingArgs { key: "tax_rate".into(), value: "10".into() }).await.unwrap();
+            // Cola: 750 retail, 600 wholesale, 700 each from 6
+            let mut cola = product("Cola", "1", 50.0);
+            cola.wholesale_price = Some(600.0);
+            cola.qty_prices = vec![crate::catalog::QtyPrice { min_qty: 6.0, price: 700.0 }];
+            let cola = create_product(&ctx, cola).await.unwrap();
+            // Bread is tax-free
+            let mut bread = product("Bread", "2", 50.0);
+            bread.selling_price = 1000.0;
+            bread.tax_exempt = true;
+            let bread = create_product(&ctx, bread).await.unwrap();
+
+            // 6 cola at the quantity price + 1 bread: tax only on the cola
+            let sale = checkout(&ctx, cart(vec![
+                CheckoutLine { product_id: cola, quantity: 6.0, ..Default::default() },
+                CheckoutLine { product_id: bread, quantity: 1.0, ..Default::default() },
+            ]))
+            .await
+            .unwrap();
+            assert_eq!((sale.subtotal, sale.tax, sale.total), (5200.0, 420.0, 5620.0));
+
+            // Wholesale: 600 each, no quantity price, no promotions
+            let mut ws = cart(vec![CheckoutLine { product_id: cola, quantity: 6.0, ..Default::default() }]);
+            ws.price_level = Some("wholesale".into());
+            assert_eq!(checkout(&ctx, ws).await.unwrap().subtotal, 3600.0);
+
+            // Buy 2 get 1 on cola: 3 cans → one free, no discount permission needed
+            crate::pricing::save_promotion(&ctx, crate::pricing::SavePromotionArgs {
+                id: None,
+                promotion: crate::pricing::PromotionInput {
+                    name: "Cola 2+1".into(),
+                    kind: "multibuy".into(),
+                    buy_qty: Some(2.0),
+                    free_qty: Some(1.0),
+                    product_ids: vec![cola],
+                    is_active: true,
+                    ..Default::default()
+                },
+            })
+            .await
+            .unwrap();
+            let sale = checkout(&ctx, cart(vec![CheckoutLine { product_id: cola, quantity: 3.0, ..Default::default() }])).await.unwrap();
+            assert_eq!((sale.subtotal, sale.promotions, sale.discount), (2250.0, 750.0, 750.0));
+            assert_eq!(sale.tax, 150.0, "tax on what's left after the promotion");
+            let (name, promo): (Option<String>, f64) = sqlx::query_as("SELECT promotion_name, promo_discount FROM sale_items WHERE sale_id = $1")
+                .bind(sale.id)
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+            assert_eq!((name.as_deref(), promo), (Some("Cola 2+1"), 750.0));
+
+            // Price changes are remembered
+            let mut edit = product("Cola", "1", 0.0);
+            edit.selling_price = 800.0;
+            edit.wholesale_price = Some(600.0);
+            crate::catalog::update_product(&ctx, crate::catalog::UpdateProductArgs { id: cola, product: edit }).await.unwrap();
+            let (old, new): (f64, f64) = sqlx::query_as("SELECT old_value, new_value FROM price_history WHERE product_id = $1 AND field = 'price'")
+                .bind(cola)
+                .fetch_one(&ctx.pool)
+                .await
+                .unwrap();
+            assert_eq!((old, new), (750.0, 800.0));
+            let changed = crate::pricing::bulk_update_prices(&ctx, crate::pricing::BulkPriceArgs { product_ids: vec![cola, bread], mode: "percent".into(), value: 10.0, round_to: 250.0 }).await.unwrap();
+            // +10 % at 250 steps: cola 800 → 880 → 1000; bread 1000 → 1100 → 1000 (unchanged)
+            assert_eq!(changed, 1);
+            let price = |id: i64| {
+                let pool = ctx.pool.clone();
+                async move { sqlx::query_as::<_, (f64,)>("SELECT CAST(selling_price AS REAL) FROM products WHERE id = $1").bind(id).fetch_one(&pool).await.unwrap().0 }
+            };
+            assert_eq!((price(cola).await, price(bread).await), (1000.0, 1000.0));
+        });
+    }
+
+    #[test]
     fn checkout_uses_database_prices_and_takes_stock() {
         tauri::async_runtime::block_on(async {
             let ctx = test_support::ctx().await;
@@ -695,6 +820,8 @@ pub mod tests {
                 customer_id: None,
                 on_account: 0.0,
                 over_limit_override_token: None,
+                price_level: None,
+                wholesale_override_token: None,
             })
             .await
             .unwrap();

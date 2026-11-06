@@ -271,6 +271,22 @@ pub struct ProductInput {
     /// False for things with no stock to count (the misc item, services)
     #[serde(default = "yes")]
     pub track_stock: bool,
+    /// Price at the wholesale level; None = same as retail
+    #[serde(default)]
+    pub wholesale_price: Option<f64>,
+    /// Cheaper each from a quantity, retail only
+    #[serde(default)]
+    pub qty_prices: Vec<QtyPrice>,
+    /// No tax on this product
+    #[serde(default)]
+    pub tax_exempt: bool,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QtyPrice {
+    pub min_qty: f64,
+    pub price: f64,
 }
 
 fn yes() -> bool {
@@ -350,6 +366,16 @@ async fn validate_product(ctx: &Ctx, p: &ProductInput, id: Option<i64>) -> Resul
                 return Err(Error::Rule("barcode_duplicate"));
             }
         }
+    }
+    if p.wholesale_price.is_some_and(|w| !(w >= 0.0)) {
+        return Err(Error::Rule("negative_amount"));
+    }
+    let mut seen_qty = Vec::new();
+    for q in &p.qty_prices {
+        if !(q.min_qty > 1.0) || !(q.price >= 0.0) || seen_qty.contains(&q.min_qty.to_bits()) {
+            return Err(Error::Rule("qty_price_invalid"));
+        }
+        seen_qty.push(q.min_qty.to_bits());
     }
     if let Some(plu) = trimmed(&p.plu) {
         if plu.len() > 6 || !plu.bytes().all(|b| b.is_ascii_digit()) {
@@ -434,6 +460,19 @@ async fn write_units(tx: &mut Transaction<'_, Sqlite>, id: i64, units: &[UnitInp
     Ok(())
 }
 
+async fn write_qty_prices(tx: &mut Transaction<'_, Sqlite>, id: i64, prices: &[QtyPrice]) -> Result<()> {
+    sqlx::query("DELETE FROM product_qty_prices WHERE product_id = $1").bind(id).execute(&mut **tx).await?;
+    for q in prices {
+        sqlx::query("INSERT INTO product_qty_prices (product_id, min_qty, price) VALUES ($1, $2, $3)")
+            .bind(id)
+            .bind(q.min_qty)
+            .bind(q.price)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
+}
+
 fn plu_of(p: &ProductInput) -> Option<String> {
     trimmed(&p.plu).map(crate::scale::normalize_plu)
 }
@@ -489,8 +528,8 @@ pub async fn create_product(ctx: &Ctx, p: ProductInput) -> Result<i64> {
     let id = sqlx::query(
         "INSERT INTO products (sku, name, category_id, barcode, cost_price,
             selling_price, min_stock_level, unit, icon_key, is_active, stock_quantity,
-            plu, open_price, track_stock)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+            plu, open_price, track_stock, wholesale_price, tax_exempt)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
     )
     .bind(&sku)
     .bind(p.name.trim())
@@ -506,6 +545,8 @@ pub async fn create_product(ctx: &Ctx, p: ProductInput) -> Result<i64> {
     .bind(plu_of(&p))
     .bind(p.open_price)
     .bind(p.track_stock)
+    .bind(p.wholesale_price)
+    .bind(p.tax_exempt)
     .execute(&mut *tx)
     .await
     .map_err(map_product_unique)?
@@ -520,6 +561,7 @@ pub async fn create_product(ctx: &Ctx, p: ProductInput) -> Result<i64> {
     }
     write_children(&mut tx, id, &codes, &p.media_ids).await?;
     write_units(&mut tx, id, &p.units).await?;
+    write_qty_prices(&mut tx, id, &p.qty_prices).await?;
     if stock > 0.0 {
         sqlx::query(
             "INSERT INTO stock_adjustments (product_id, adjustment_type, quantity, reason, user_id, created_at)
@@ -575,11 +617,13 @@ pub async fn update_product(ctx: &Ctx, args: UpdateProductArgs) -> Result<()> {
     let p = &args.product;
     let codes = validate_product(ctx, p, Some(args.id)).await?;
     let mut tx = ctx.pool.begin().await?;
+    crate::pricing::record_changes(&mut tx, args.id, Some(p.selling_price), Some(p.wholesale_price), Some(p.cost_price), "edit", actor.user_id).await?;
     let mut q = sqlx::query(
         "UPDATE products SET name = $1, category_id = $2, barcode = $3,
             cost_price = $4, selling_price = $5, min_stock_level = $6, unit = $7, icon_key = $8,
-            is_active = $9, sku = COALESCE($10, sku), plu = $11, open_price = $12, track_stock = $13
-         WHERE id = $14",
+            is_active = $9, sku = COALESCE($10, sku), plu = $11, open_price = $12, track_stock = $13,
+            wholesale_price = $14, tax_exempt = $15
+         WHERE id = $16",
     )
     .bind(p.name.trim())
     .bind(p.category_id)
@@ -590,13 +634,14 @@ pub async fn update_product(ctx: &Ctx, args: UpdateProductArgs) -> Result<()> {
     .bind(&p.unit)
     .bind(trimmed(&p.icon_key))
     .bind(p.is_active);
-    q = q.bind(trimmed(&p.sku)).bind(plu_of(p)).bind(p.open_price).bind(p.track_stock).bind(args.id);
+    q = q.bind(trimmed(&p.sku)).bind(plu_of(p)).bind(p.open_price).bind(p.track_stock).bind(p.wholesale_price).bind(p.tax_exempt).bind(args.id);
     let done = q.execute(&mut *tx).await.map_err(map_product_unique)?;
     if done.rows_affected() == 0 {
         return Err(Error::NotFound);
     }
     write_children(&mut tx, args.id, &codes, &p.media_ids).await?;
     write_units(&mut tx, args.id, &p.units).await?;
+    write_qty_prices(&mut tx, args.id, &p.qty_prices).await?;
     tx.commit().await?;
     audit::log(ctx, Some(actor.user_id), "product.update", "products", Some(args.id), &serde_json::json!({ "name": p.name })).await
 }

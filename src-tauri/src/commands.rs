@@ -7,7 +7,7 @@ use tauri::AppHandle;
 
 use crate::ctx::Ctx;
 use crate::error::{Error, Result};
-use crate::{auth, backup, catalog, customers, expenses, export, lookup, notifications, printing, query, returns, sales, scale, settings, shifts, staff, stock, stockcount, suppliers};
+use crate::{auth, backup, catalog, customers, expenses, export, lookup, notifications, pricing, printing, query, returns, sales, scale, settings, shifts, staff, stock, stockcount, suppliers};
 
 macro_rules! commands {
     ($( $name:ident $( ($args:ty) )? -> $out:ty => $f:path; )*) => {
@@ -115,6 +115,10 @@ commands! {
     remove_count_item (stockcount::CountItemArgs) -> () => stockcount::remove_count_item;
     apply_stock_count (stockcount::CountIdArgs) -> stockcount::Applied => stockcount::apply_stock_count;
     cancel_stock_count (stockcount::CountIdArgs) -> () => stockcount::cancel_stock_count;
+
+    save_promotion (pricing::SavePromotionArgs) -> i64 => pricing::save_promotion;
+    delete_promotion (pricing::IdArgs) -> () => pricing::delete_promotion;
+    bulk_update_prices (pricing::BulkPriceArgs) -> i64 => pricing::bulk_update_prices;
 
     backup_status -> backup::BackupStatus => backup::backup_status;
     backup_now -> backup::BackupFile => backup::backup_now;

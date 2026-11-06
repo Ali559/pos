@@ -55,9 +55,14 @@ export interface Product {
   openPrice: number;
   trackStock: number;
   plu: string | null;
+  /** Price at the wholesale level; null = same as retail */
+  wholesalePrice: number | null;
+  taxExempt: number;
   cover: MediaFile | null;
   /** Pack sizes, filled by listProducts / findProductByCode */
   units: ProductUnit[];
+  /** Cheaper each from a quantity (retail) */
+  qtyPrices: { minQty: number; price: number }[];
 }
 
 export type StockState = "ok" | "low" | "out";
@@ -96,6 +101,7 @@ const PRODUCT_COLUMNS = `
   COALESCE(c.color, pc.color) AS categoryColor,
   c.icon_key AS categoryIcon,
   p.open_price AS openPrice, p.track_stock AS trackStock, p.plu,
+  p.wholesale_price AS wholesalePrice, p.tax_exempt AS taxExempt,
   m.id AS m_id, m.uuid AS m_uuid, m.path AS m_path, m.mime AS m_mime,
   m.width AS m_width, m.height AS m_height, m.bytes AS m_bytes, m.blurhash AS m_blurhash`;
 
@@ -106,7 +112,7 @@ const PRODUCT_FROM = `
   LEFT JOIN product_media pm ON pm.product_id = p.id AND pm.position = 0
   LEFT JOIN media_files m ON m.id = pm.media_id`;
 
-type ProductRow = Omit<Product, "cover" | "units"> & {
+type ProductRow = Omit<Product, "cover" | "units" | "qtyPrices"> & {
   m_id: number | null; m_uuid: string; m_path: string; m_mime: string;
   m_width: number; m_height: number; m_bytes: number; m_blurhash: string;
 };
@@ -114,6 +120,7 @@ type ProductRow = Omit<Product, "cover" | "units"> & {
 const toProduct = ({ m_id, m_uuid, m_path, m_mime, m_width, m_height, m_bytes, m_blurhash, ...p }: ProductRow): Product => ({
   ...p,
   units: [],
+  qtyPrices: [],
   cover: m_id
     ? { id: m_id, uuid: m_uuid, path: m_path, mime: m_mime, width: m_width, height: m_height, bytes: m_bytes, blurhash: m_blurhash }
     : null,
@@ -165,10 +172,15 @@ const UNIT_COLUMNS = "id, product_id AS productId, name, factor, barcode, price"
 /** Attaches pack sizes to a list of products */
 const withUnits = async (products: Product[]) => {
   if (!products.length) return products;
-  const units = await select<ProductUnit>(`SELECT ${UNIT_COLUMNS} FROM product_units ORDER BY product_id, position, id`);
+  const [units, tiers] = await Promise.all([
+    select<ProductUnit>(`SELECT ${UNIT_COLUMNS} FROM product_units ORDER BY product_id, position, id`),
+    select<{ product_id: number; minQty: number; price: number }>("SELECT product_id, min_qty AS minQty, price FROM product_qty_prices ORDER BY product_id, min_qty"),
+  ]);
   const byProduct = new Map<number, ProductUnit[]>();
   for (const u of units) byProduct.set(u.productId, [...(byProduct.get(u.productId) ?? []), u]);
-  return products.map((p) => ({ ...p, units: byProduct.get(p.id) ?? [] }));
+  const tiersBy = new Map<number, { minQty: number; price: number }[]>();
+  for (const { product_id, ...t } of tiers) tiersBy.set(product_id, [...(tiersBy.get(product_id) ?? []), t]);
+  return products.map((p) => ({ ...p, units: byProduct.get(p.id) ?? [], qtyPrices: tiersBy.get(p.id) ?? [] }));
 };
 
 export const getProductById = async (id: number) => {
@@ -216,20 +228,42 @@ export interface ProductDetail {
   plu: string | null;
   open_price: number;
   track_stock: number;
+  wholesale_price: number | null;
+  tax_exempt: number;
   extraBarcodes: string[];
   media: MediaFile[];
   units: ProductUnit[];
+  qtyPrices: { minQty: number; price: number }[];
 }
 
+export interface PriceChange {
+  id: number;
+  field: "price" | "wholesale" | "cost";
+  old_value: number | null;
+  new_value: number | null;
+  source: "edit" | "bulk" | "delivery";
+  user: string | null;
+  changed_at: string;
+}
+
+export const getPriceHistory = (productId: number) =>
+  select<PriceChange>(
+    `SELECT h.id, h.field, h.old_value, h.new_value, h.source, u.full_name AS user, h.changed_at
+     FROM price_history h LEFT JOIN users u ON u.id = h.user_id
+     WHERE h.product_id = $1 ORDER BY h.changed_at DESC, h.id DESC LIMIT 50`,
+    [productId],
+  );
+
 export const getProduct = async (id: number): Promise<ProductDetail | null> => {
-  const p = await selectOne<Omit<ProductDetail, "extraBarcodes" | "media" | "units">>(
+  const p = await selectOne<Omit<ProductDetail, "extraBarcodes" | "media" | "units" | "qtyPrices">>(
     `SELECT id, sku, name, category_id, barcode, cost_price, selling_price,
-            min_stock_level, unit, icon_key, is_active, stock_quantity, plu, open_price, track_stock
+            min_stock_level, unit, icon_key, is_active, stock_quantity, plu, open_price, track_stock,
+            wholesale_price, tax_exempt
      FROM products WHERE id = $1`,
     [id],
   );
   if (!p) return null;
-  const [codes, media, units] = await Promise.all([
+  const [codes, media, units, qtyPrices] = await Promise.all([
     select<{ barcode: string }>(
       "SELECT barcode FROM product_barcodes WHERE product_id = $1 ORDER BY id",
       [id],
@@ -241,6 +275,7 @@ export const getProduct = async (id: number): Promise<ProductDetail | null> => {
       [id],
     ),
     select<ProductUnit>(`SELECT ${UNIT_COLUMNS} FROM product_units WHERE product_id = $1 ORDER BY position, id`, [id]),
+    select<{ minQty: number; price: number }>("SELECT min_qty AS minQty, price FROM product_qty_prices WHERE product_id = $1 ORDER BY min_qty", [id]),
   ]);
-  return { ...p, extraBarcodes: codes.map((c) => c.barcode), media, units };
+  return { ...p, extraBarcodes: codes.map((c) => c.barcode), media, units, qtyPrices };
 };

@@ -15,6 +15,7 @@ mod export;
 mod lookup;
 mod media;
 mod notifications;
+mod pricing;
 mod printing;
 mod query;
 mod returns;
@@ -133,6 +134,9 @@ pub fn run() {
             commands::remove_count_item,
             commands::apply_stock_count,
             commands::cancel_stock_count,
+            commands::save_promotion,
+            commands::delete_promotion,
+            commands::bulk_update_prices,
             commands::backup_status,
             commands::backup_now,
             commands::seed_demo_data,

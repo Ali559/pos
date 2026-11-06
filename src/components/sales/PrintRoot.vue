@@ -44,9 +44,13 @@ const barcode = computed(() => (p.value ? code128Bars(p.value.sale.receipt_numbe
               <td class="text-start"><bdi>{{ lineSold(l).label }}</bdi> × {{ formatCurrency(lineSold(l).each) }}</td>
               <td class="text-end">{{ formatCurrency(l.subtotal + l.discount) }}</td>
             </tr>
-            <tr v-if="l.discount > 0">
+            <tr v-if="l.promo_discount > 0">
+              <td class="ps-2"><bdi>{{ l.promotion_name }}</bdi></td>
+              <td class="text-end">−{{ formatCurrency(l.promo_discount) }}</td>
+            </tr>
+            <tr v-if="l.discount - l.promo_discount > 0.0001">
               <td class="ps-2">{{ $t("receipt.discount") }}</td>
-              <td class="text-end">−{{ formatCurrency(l.discount) }}</td>
+              <td class="text-end">−{{ formatCurrency(l.discount - l.promo_discount) }}</td>
             </tr>
           </template>
         </tbody>

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import PromotionsTab from "@/components/catalog/PromotionsTab.vue";
+import BulkPriceDialog from "@/components/catalog/BulkPriceDialog.vue";
+import { TrendingUp } from "lucide-vue-next";
 import StockCountTab from "@/components/catalog/StockCountTab.vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { watchDebounced } from "@vueuse/core";
@@ -119,6 +122,8 @@ const openStock = (p: Product) => {
   stockOpen.value = true;
 };
 
+const bulkOpen = ref(false);
+
 const onCategoriesChanged = () => {
   loadCategories();
   load();
@@ -132,6 +137,7 @@ const onCategoriesChanged = () => {
         <TabsTrigger value="products">{{ $t("catalog.tabs.products") }}</TabsTrigger>
         <TabsTrigger value="categories">{{ $t("catalog.tabs.categories") }}</TabsTrigger>
         <TabsTrigger v-if="canEdit" value="quick">{{ $t("catalog.tabs.quickAdd") }}</TabsTrigger>
+        <TabsTrigger v-if="auth.can('catalog.promotions')" value="promotions">{{ $t("catalog.tabs.promotions") }}</TabsTrigger>
         <TabsTrigger v-if="auth.can('inventory.count')" value="count">{{ $t("catalog.tabs.count") }}</TabsTrigger>
       </TabsList>
 
@@ -163,7 +169,11 @@ const onCategoriesChanged = () => {
             <input v-model="showInactive" type="checkbox" class="size-4 accent-primary" />
             {{ $t("catalog.showInactive") }}
           </label>
-          <Button v-if="canEdit" size="lg" class="ms-auto" @click="openEditor(null)">
+          <Button v-if="auth.can('catalog.bulk_prices')" variant="outline" size="lg" class="ms-auto" @click="bulkOpen = true">
+            <TrendingUp />
+            {{ $t("bulkPrices.button") }}
+          </Button>
+          <Button v-if="canEdit" size="lg" :class="auth.can('catalog.bulk_prices') ? '' : 'ms-auto'" @click="openEditor(null)">
             <Plus />
             {{ $t("inventory.addProduct") }}
           </Button>
@@ -285,12 +295,17 @@ const onCategoriesChanged = () => {
         <QuickAddTab :categories="categories" @changed="onSaved" />
       </TabsContent>
 
+      <TabsContent v-if="auth.can('catalog.promotions')" value="promotions">
+        <PromotionsTab v-if="tab === 'promotions'" :categories="categories" />
+      </TabsContent>
+
       <TabsContent v-if="auth.can('inventory.count')" value="count">
         <StockCountTab :categories="categories" @applied="load" />
       </TabsContent>
     </Tabs>
 
     <StockSheet v-model:open="stockOpen" :product="stockProduct" @saved="load" />
+    <BulkPriceDialog v-model:open="bulkOpen" :query="query" @done="load" />
     <ProductSheet
       v-model:open="sheetOpen"
       :product-id="editingId"

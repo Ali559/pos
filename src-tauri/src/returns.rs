@@ -380,6 +380,8 @@ mod tests {
                 customer_id: None,
                 on_account: 0.0,
                 over_limit_override_token: None,
+                price_level: None,
+                wholesale_override_token: None,
             })
             .await
             .unwrap();

@@ -30,6 +30,9 @@ pub struct CustomerInput {
     pub credit_limit: Option<f64>,
     #[serde(default = "yes")]
     pub is_active: bool,
+    /// retail | wholesale: the level their sales start at
+    #[serde(default)]
+    pub price_level: Option<String>,
 }
 
 fn yes() -> bool {
@@ -63,6 +66,9 @@ async fn validate(ctx: &Ctx, c: &CustomerInput, id: Option<i64>) -> Result<Optio
     if c.credit_limit.is_some_and(|l| !(l >= 0.0)) {
         return Err(Error::Rule("negative_amount"));
     }
+    if !matches!(c.price_level.as_deref(), None | Some("retail") | Some("wholesale")) {
+        return Err(Error::Invalid("unknown price level".into()));
+    }
     let phone = trimmed(&c.phone).map(normalize_phone).filter(|p| !p.is_empty());
     if let Some(p) = &phone {
         let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM customers WHERE phone = $1 AND id IS NOT $2")
@@ -83,8 +89,8 @@ pub async fn create_customer(ctx: &Ctx, c: CustomerInput) -> Result<i64> {
     // Only an editor sets a credit limit; a cashier's new customer has none
     let limit = if actor.can("customers.edit") { c.credit_limit } else { None };
     let id = sqlx::query(
-        "INSERT INTO customers (name, phone, address, notes, credit_limit, is_active, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
+        "INSERT INTO customers (name, phone, address, notes, credit_limit, is_active, price_level, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $8, $7, $7)",
     )
     .bind(c.name.trim())
     .bind(&phone)
@@ -93,6 +99,7 @@ pub async fn create_customer(ctx: &Ctx, c: CustomerInput) -> Result<i64> {
     .bind(limit)
     .bind(c.is_active)
     .bind(now())
+    .bind(if actor.can("customers.edit") { c.price_level.as_deref().unwrap_or("retail") } else { "retail" })
     .execute(&ctx.pool)
     .await?
     .last_insert_rowid();
@@ -111,7 +118,8 @@ pub async fn update_customer(ctx: &Ctx, args: UpdateCustomerArgs) -> Result<()> 
     let c = &args.customer;
     let phone = validate(ctx, c, Some(args.id)).await?;
     let done = sqlx::query(
-        "UPDATE customers SET name = $1, phone = $2, address = $3, notes = $4, credit_limit = $5, is_active = $6, updated_at = $7
+        "UPDATE customers SET name = $1, phone = $2, address = $3, notes = $4, credit_limit = $5, is_active = $6, updated_at = $7,
+            price_level = COALESCE($9, price_level)
          WHERE id = $8",
     )
     .bind(c.name.trim())
@@ -122,6 +130,7 @@ pub async fn update_customer(ctx: &Ctx, args: UpdateCustomerArgs) -> Result<()> 
     .bind(c.is_active)
     .bind(now())
     .bind(args.id)
+    .bind(c.price_level.as_deref())
     .execute(&ctx.pool)
     .await?;
     if done.rows_affected() == 0 {

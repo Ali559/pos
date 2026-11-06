@@ -162,7 +162,8 @@ const reprint = (id: number) => printReceipt(id, { copy: true }).catch((e) => (e
                 <td class="px-4 py-2.5">
                   <bdi class="font-medium">{{ l.name }}</bdi>
                   <span class="num block text-xs text-muted-foreground"><bdi v-if="l.unit_name">{{ l.unit_name }} </bdi>× {{ formatCurrency(lineSold(l).each) }}</span>
-                  <span v-if="l.discount" class="num block text-xs text-primary">−{{ formatCurrency(l.discount) }}</span>
+                  <span v-if="l.promo_discount" class="num block text-xs text-success"><bdi>{{ l.promotion_name }}</bdi> −{{ formatCurrency(l.promo_discount) }}</span>
+                  <span v-if="l.discount - l.promo_discount > 0.0001" class="num block text-xs text-primary">−{{ formatCurrency(l.discount - l.promo_discount) }}</span>
                 </td>
                 <td class="num px-4 py-2.5 text-end">
                   <bdi>{{ lineSold(l).label }}</bdi>

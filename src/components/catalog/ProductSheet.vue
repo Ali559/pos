@@ -17,7 +17,8 @@ import {
 import EditSheet from "@/components/EditSheet.vue";
 import IconPicker from "@/components/icons/IconPicker.vue";
 import MediaGallery from "@/components/media/MediaGallery.vue";
-import { getProduct, isWeighed, type Category } from "@/db/catalog";
+import { getPriceHistory, getProduct, isWeighed, type Category, type PriceChange } from "@/db/catalog";
+import { formatDateTime } from "@/lib/locale";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
 import { formatCurrency } from "@/lib/format";
@@ -44,7 +45,9 @@ const blank = () => ({
   minStock: "0", unit: "piece" as string, iconKey: null as string | null,
   isActive: true, initialStock: "0", initialExpiry: "", stock: 0,
   units: [] as PackDraft[], plu: "", openPrice: false, trackStock: true,
+  wholesalePrice: "", qtyPrices: [] as { minQty: string; price: string }[], taxExempt: false,
 });
+const history = ref<PriceChange[]>([]);
 
 /** A pack size being edited; id is kept for existing packs */
 interface PackDraft { id: number | null; name: string; factor: string; barcode: string; price: string }
@@ -76,6 +79,7 @@ const load = async () => {
   carriedNote = null;
   form.value = blank();
   images.value = [];
+  history.value = [];
   if (props.productId === null) {
     // New product: the cursor waits in the barcode field for a scan
     nextTick(() => scanInput.value?.focus());
@@ -104,7 +108,11 @@ const load = async () => {
     plu: p.plu ?? "",
     openPrice: !!p.open_price,
     trackStock: !!p.track_stock,
+    wholesalePrice: p.wholesale_price != null ? String(p.wholesale_price) : "",
+    qtyPrices: p.qtyPrices.map((q) => ({ minQty: String(q.minQty), price: String(q.price) })),
+    taxExempt: !!p.tax_exempt,
   };
+  history.value = await getPriceHistory(p.id);
   images.value = p.media;
 };
 watch(open, (isOpen) => isOpen && load());
@@ -185,6 +193,9 @@ const save = async () => {
     plu: isWeighed(f.unit) ? f.plu.trim() || null : null,
     openPrice: f.openPrice,
     trackStock: f.trackStock,
+    wholesalePrice: f.wholesalePrice === "" ? null : Number(f.wholesalePrice),
+    qtyPrices: f.qtyPrices.filter((q) => q.minQty !== "" && q.price !== "").map((q) => ({ minQty: Number(q.minQty), price: Number(q.price) })),
+    taxExempt: f.taxExempt,
   };
   saving.value = true;
   error.value = "";
@@ -284,6 +295,29 @@ const save = async () => {
       <p v-if="margin" class="-mt-2 text-sm" :class="margin.amount < 0 ? 'text-destructive' : 'text-muted-foreground'">
         {{ $t("catalog.margin", { amount: formatCurrency(margin.amount), percent: margin.percent }) }}
       </p>
+
+      <!-- Other prices: wholesale, and cheaper from a quantity -->
+      <details v-if="!form.openPrice" class="rounded-lg border p-3" :open="!!form.wholesalePrice || form.qtyPrices.length > 0">
+        <summary class="cursor-pointer text-sm font-medium">{{ $t("pricing.morePrices") }}</summary>
+        <div class="mt-3 space-y-3">
+          <div class="space-y-2">
+            <Label for="p-wholesale">{{ $t("pricing.wholesalePrice") }}</Label>
+            <Input id="p-wholesale" v-model="form.wholesalePrice" type="number" min="0" step="any" dir="ltr" class="w-40" :placeholder="$t('pricing.sameAsRetail')" />
+          </div>
+          <fieldset class="space-y-2">
+            <legend class="text-sm font-medium">{{ $t("pricing.qtyPrices") }}</legend>
+            <p class="text-xs text-muted-foreground">{{ $t("pricing.qtyPricesHint") }}</p>
+            <div v-for="(q, i) in form.qtyPrices" :key="i" class="flex items-center gap-2 text-sm">
+              <span>{{ $t("pricing.from") }}</span>
+              <Input v-model="q.minQty" type="number" min="2" step="any" dir="ltr" class="w-20" :aria-label="$t('pricing.fromQty')" />
+              <span>{{ $t("pricing.each") }}</span>
+              <Input v-model="q.price" type="number" min="0" step="any" dir="ltr" class="w-28" :aria-label="$t('pricing.priceEach')" />
+              <Button type="button" variant="ghost" size="icon-sm" :aria-label="$t('common.remove')" @click="form.qtyPrices.splice(i, 1)"><X /></Button>
+            </div>
+            <Button type="button" variant="ghost" size="sm" @click="form.qtyPrices.push({ minQty: '', price: '' })"><Plus /> {{ $t("pricing.addQtyPrice") }}</Button>
+          </fieldset>
+        </div>
+      </details>
 
       <div class="grid gap-4 sm:grid-cols-2">
         <div class="space-y-2">
@@ -397,12 +431,33 @@ const save = async () => {
         </span>
       </label>
       <label class="flex items-center gap-3 text-sm">
+        <input v-model="form.taxExempt" type="checkbox" class="size-4 accent-primary" />
+        <span>
+          <span class="font-medium">{{ $t("pricing.taxExempt") }}</span>
+          <span class="block text-muted-foreground">{{ $t("pricing.taxExemptHint") }}</span>
+        </span>
+      </label>
+      <label class="flex items-center gap-3 text-sm">
         <input v-model="form.trackStock" type="checkbox" class="size-4 accent-primary" />
         <span>
           <span class="font-medium">{{ $t("catalog.trackStock") }}</span>
           <span class="block text-muted-foreground">{{ $t("catalog.trackStockHint") }}</span>
         </span>
       </label>
+
+      <details v-if="history.length" class="rounded-lg border p-3">
+        <summary class="cursor-pointer text-sm font-medium">{{ $t("pricing.history") }}</summary>
+        <ol class="mt-2 divide-y text-sm">
+          <li v-for="h in history" :key="h.id" class="flex items-center gap-2 py-1.5">
+            <span class="min-w-0 flex-1">
+              {{ $t(`pricing.fields.${h.field}`) }}
+              <span class="block text-xs text-muted-foreground">{{ formatDateTime(new Date(h.changed_at)) }} · {{ $t(`pricing.sources.${h.source}`) }}<template v-if="h.user"> · {{ h.user }}</template></span>
+            </span>
+            <span class="num text-muted-foreground line-through">{{ h.old_value != null ? formatCurrency(h.old_value) : "—" }}</span>
+            <span class="num font-medium">{{ h.new_value != null ? formatCurrency(h.new_value) : "—" }}</span>
+          </li>
+        </ol>
+      </details>
     </template>
 
     <template #footer>

@@ -11,6 +11,7 @@ export interface Customer {
   /** Most they may owe; null for no limit */
   credit_limit: number | null;
   is_active: number;
+  price_level: "retail" | "wholesale";
   /** Positive: what they owe the shop */
   balance: number;
   /** Last sale, payment or adjustment */
@@ -35,7 +36,7 @@ export interface LedgerEntry {
 }
 
 const COLUMNS = `
-  c.id, c.name, c.phone, c.address, c.notes, c.credit_limit, c.is_active,
+  c.id, c.name, c.phone, c.address, c.notes, c.credit_limit, c.is_active, c.price_level,
   COALESCE((SELECT SUM(amount) FROM customer_ledger l WHERE l.customer_id = c.id), 0) AS balance,
   (SELECT MAX(created_at) FROM customer_ledger l WHERE l.customer_id = c.id) AS last_activity`;
 

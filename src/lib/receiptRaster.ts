@@ -160,7 +160,8 @@ export const renderReceipt = async (
     }
     const sold = lineSold(l);
     row(`${sold.label} × ${formatCurrency(sold.each)}`, formatCurrency(l.subtotal + l.discount));
-    if (l.discount > 0) row(`  ${t("receipt.discount")}`, `−${formatCurrency(l.discount)}`);
+    if (l.promo_discount > 0) row(`  ${l.promotion_name ?? ""}`, `−${formatCurrency(l.promo_discount)}`);
+    if (l.discount - l.promo_discount > 0.0001) row(`  ${t("receipt.discount")}`, `−${formatCurrency(l.discount - l.promo_discount)}`);
   }
   rule();
   row(t("pos.subtotal"), formatCurrency(sale.subtotal));

@@ -19,7 +19,7 @@ const emit = defineEmits<{ saved: [id: number] }>();
 const auth = useAuth();
 const canEdit = computed(() => auth.can("customers.edit"));
 
-const form = ref({ name: "", phone: "", address: "", notes: "", creditLimit: "", isActive: true });
+const form = ref({ name: "", phone: "", address: "", notes: "", creditLimit: "", isActive: true, priceLevel: "retail" });
 const saving = ref(false);
 const error = ref("");
 
@@ -31,8 +31,8 @@ watch(open, (isOpen) => {
   const typed = props.initialName?.trim() ?? "";
   const looksLikePhone = /^[\d\s+()-]{5,}$/.test(typed);
   form.value = c
-    ? { name: c.name, phone: c.phone ?? "", address: c.address ?? "", notes: c.notes ?? "", creditLimit: c.credit_limit != null ? String(c.credit_limit) : "", isActive: !!c.is_active }
-    : { name: looksLikePhone ? "" : typed, phone: looksLikePhone ? typed : "", address: "", notes: "", creditLimit: "", isActive: true };
+    ? { name: c.name, phone: c.phone ?? "", address: c.address ?? "", notes: c.notes ?? "", creditLimit: c.credit_limit != null ? String(c.credit_limit) : "", isActive: !!c.is_active, priceLevel: c.price_level }
+    : { name: looksLikePhone ? "" : typed, phone: looksLikePhone ? typed : "", address: "", notes: "", creditLimit: "", isActive: true, priceLevel: "retail" };
 });
 
 const save = async () => {
@@ -44,6 +44,7 @@ const save = async () => {
     notes: f.notes || null,
     creditLimit: f.creditLimit === "" ? null : Number(f.creditLimit),
     isActive: f.isActive,
+    priceLevel: canEdit.value ? f.priceLevel : null,
   };
   saving.value = true;
   error.value = "";
@@ -79,6 +80,14 @@ const save = async () => {
       <Label for="c-limit">{{ $t("customers.fields.creditLimit") }}</Label>
       <Input id="c-limit" v-model="form.creditLimit" type="number" min="0" step="any" dir="ltr" class="w-48" :placeholder="$t('customers.noLimit')" />
       <p class="text-xs text-muted-foreground">{{ $t("customers.creditLimitHint") }}</p>
+    </div>
+    <div v-if="canEdit" class="space-y-2">
+      <Label for="c-level">{{ $t("pricing.level") }}</Label>
+      <select id="c-level" v-model="form.priceLevel" class="h-10 w-48 rounded-md border border-input bg-card px-2 text-sm">
+        <option value="retail">{{ $t("pricing.levels.retail") }}</option>
+        <option value="wholesale">{{ $t("pricing.levels.wholesale") }}</option>
+      </select>
+      <p class="text-xs text-muted-foreground">{{ $t("pricing.levelHint") }}</p>
     </div>
     <div class="space-y-2">
       <Label for="c-notes">{{ $t("customers.fields.notes") }} <span class="font-normal text-muted-foreground">({{ $t("common.optional") }})</span></Label>

@@ -96,7 +96,7 @@ export const printTestPage = async (target: string) => {
     method: "cash", tendered: 2000, change: 500, refunded: 0,
     payments: [{ method: "cash", amount: 1500, tendered: 2000 }],
     customer_id: null, customer_name: null, customer_balance: null,
-    lines: [{ id: 0, product_id: 0, name: "١٢٣ ABC کوردی عربي", quantity: 2, unit_price: 750, discount: 0, subtotal: 1500, tax_rate: 0, returned: 0, unit: "piece", unit_name: null, unit_factor: null }],
+    lines: [{ id: 0, product_id: 0, name: "١٢٣ ABC کوردی عربي", quantity: 2, unit_price: 750, discount: 0, subtotal: 1500, tax_rate: 0, returned: 0, unit: "piece", unit_name: null, unit_factor: null, promotion_name: null, promo_discount: 0 }],
     returns: [],
   };
   const width = (await getSetting("receipt_width")) === "58" ? 58 : 80;
