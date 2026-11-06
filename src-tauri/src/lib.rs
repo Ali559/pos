@@ -12,6 +12,7 @@ mod db;
 mod error;
 mod expenses;
 mod export;
+mod import;
 mod lookup;
 mod media;
 mod notifications;
@@ -56,6 +57,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(Arc::new(ctx::SessionState::default()))
         .manage(backup::RestoreCandidate::default())
+        .manage(import::ImportFile::default())
         .setup(|app| {
             app.manage(db::open_read_pool(app.handle())?);
             background::start(app.handle().clone());
@@ -70,6 +72,8 @@ pub fn run() {
             backup::choose_backup_folder,
             backup::inspect_backup,
             backup::restore_backup,
+            import::open_import_file,
+            import::import_products,
             commands::select,
             commands::auth_status,
             commands::complete_setup,

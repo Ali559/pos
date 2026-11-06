@@ -134,15 +134,24 @@ Built 2026-11-07 (migration `0013`, `src-tauri/src/pricing.rs`, `src/lib/pricing
 - **Price history**: every change to price, wholesale price or cost (from editing, a bulk change or a delivery) is recorded with who and when, and listed in the product form.
 - **One set of rules in two places.** Rust (checkout) is what's charged; `src/lib/pricing.ts` mirrors it for the register's preview, with the same test cases on both sides (`tests/pricing.test.ts`, `sales::tests::wholesale_quantity_prices_promotions_and_tax_free`).
 
-## 12. Catalog upkeep ⬜
+## 12. Catalog upkeep ✅
 
-| Item | Size | Notes |
+Built 2026-11-07 (`src-tauri/src/import.rs`, `src/lib/labels.ts`, `src/lib/ean13.ts`; Inventory → *More*). Labels were checked on screen (thermal and A4 layouts); importing has unit tests but the file dialog hasn't been clicked through in the desktop app yet, and nothing has been printed on paper.
+
+| Item | Size | Status |
 | --- | --- | --- |
-| Import from a spreadsheet | M | CSV/Excel with column mapping, a preview of new vs updated items, and a dry run. |
-| Export the catalog | S | Products, stock and prices to CSV (UTF-8 with BOM, like analytics). |
-| Shelf and price labels | M | Print labels with name, price and a barcode (Code 128 / EAN-13) for selected items, or every item whose price changed since a date. Same raster path as receipts, or A4 sheets. |
+| Import from a spreadsheet | M | ✅ |
+| Export the catalog | S | ✅ |
+| Shelf and price labels | M | ✅ |
 
----
+**How it works**
+- **Import** (Inventory → More → *Import from a spreadsheet*): CSV (comma, semicolon or tab, with or without a BOM), Excel (.xlsx/.xls) or LibreOffice (.ods), first sheet, first row as headers. Rust opens the file dialog and reads it; columns are matched to fields by their names in English, Kurdish or Arabic (the export's own headers always match), and every match can be changed. *Check* shows what would be new, updated, skipped or refused (with the row number and why) without writing anything; *Import* does it in one transaction.
+  - Products are matched by barcode (any of the product's barcodes), then SKU.
+  - Numbers may use Eastern Arabic digits (٠١٢ / ۰۱۲), thousands separators and currency words; units may be written in any of the three languages.
+  - New products need a name and a price; their stock comes in as a batch. Existing products get their name, prices, category, unit and reorder level from the file (blank cells are left alone); stock is never changed by an import (use a stock count). Price changes go into the price history.
+  - Missing categories are created (with a tag icon) for people who may manage categories; for others those rows are refused.
+- **Export** (More → *Export the catalog*): the products the list shows as CSV with the import's column names, so a file can be exported, edited in Excel and imported back. Uses the `analytics.export` permission.
+- **Labels** (More → *Print labels*): every product the list shows, or every product whose price changed since a date (for re-labelling shelves after a price change), any number of copies. Name, price (per kg for weighed products) and a barcode: EAN-13 when the product has a valid 12/13-digit code, else Code 128 of its barcode or SKU. Printed as an A4 sheet (3 across) through the print dialog, or one label at a time on the receipt printer (each cut off), drawn at 203 dpi like receipts so Kurdish and Arabic are shaped correctly.
 
 ## 13. Till comfort and platform ⬜
 

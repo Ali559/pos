@@ -1,7 +1,13 @@
 <script setup lang="ts">
+import { i18n } from "@/utils/i18n";
 import PromotionsTab from "@/components/catalog/PromotionsTab.vue";
 import BulkPriceDialog from "@/components/catalog/BulkPriceDialog.vue";
-import { TrendingUp } from "lucide-vue-next";
+import { Download, FileSpreadsheet, MoreHorizontal, Tags, TrendingUp } from "lucide-vue-next";
+import ImportDialog from "@/components/catalog/ImportDialog.vue";
+import LabelsDialog from "@/components/catalog/LabelsDialog.vue";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { exportCsv } from "@/lib/exportCsv";
+import { errorMessage } from "@/lib/errors";
 import StockCountTab from "@/components/catalog/StockCountTab.vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { watchDebounced } from "@vueuse/core";
@@ -123,6 +129,26 @@ const openStock = (p: Product) => {
 };
 
 const bulkOpen = ref(false);
+const importOpen = ref(false);
+const labelsOpen = ref(false);
+const toolMessage = ref("");
+
+// The catalog as a spreadsheet, in the columns the import reads back
+const exportCatalog = async () => {
+  toolMessage.value = "";
+  try {
+    const all = await listProducts({ ...query.value, limit: undefined, offset: undefined });
+    const tr = (k: string) => i18n.global.t(`importer.fields.${k}`);
+    await exportCsv(`catalog-${new Date().toLocaleDateString("en-CA")}`, [
+      ["name", "barcode", "sku", "category", "unit", "price", "wholesale", "cost", "stock", "minStock"].map(tr),
+      ...all.filter((p) => !p.openPrice).map((p) => [
+        p.name, p.barcode, p.sku, p.categoryName, p.unit, p.price, p.wholesalePrice, p.cost, p.stock, p.minStock,
+      ]),
+    ]);
+  } catch (e) {
+    toolMessage.value = errorMessage(e);
+  }
+};
 
 const onCategoriesChanged = () => {
   loadCategories();
@@ -169,16 +195,24 @@ const onCategoriesChanged = () => {
             <input v-model="showInactive" type="checkbox" class="size-4 accent-primary" />
             {{ $t("catalog.showInactive") }}
           </label>
-          <Button v-if="auth.can('catalog.bulk_prices')" variant="outline" size="lg" class="ms-auto" @click="bulkOpen = true">
-            <TrendingUp />
-            {{ $t("bulkPrices.button") }}
-          </Button>
-          <Button v-if="canEdit" size="lg" :class="auth.can('catalog.bulk_prices') ? '' : 'ms-auto'" @click="openEditor(null)">
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button variant="outline" size="lg" class="ms-auto"><MoreHorizontal />{{ $t("importer.more") }}</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem v-if="canEdit" class="cursor-pointer gap-2" @click="importOpen = true"><FileSpreadsheet class="size-4" />{{ $t("importer.title") }}</DropdownMenuItem>
+              <DropdownMenuItem v-if="auth.can('analytics.export')" class="cursor-pointer gap-2" @click="exportCatalog"><Download class="size-4" />{{ $t("importer.export") }}</DropdownMenuItem>
+              <DropdownMenuItem class="cursor-pointer gap-2" @click="labelsOpen = true"><Tags class="size-4" />{{ $t("labels.title") }}</DropdownMenuItem>
+              <DropdownMenuItem v-if="auth.can('catalog.bulk_prices')" class="cursor-pointer gap-2" @click="bulkOpen = true"><TrendingUp class="size-4" />{{ $t("bulkPrices.button") }}</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button v-if="canEdit" size="lg" @click="openEditor(null)">
             <Plus />
             {{ $t("inventory.addProduct") }}
           </Button>
         </div>
 
+        <p v-if="toolMessage" role="alert" class="mb-3 text-sm text-destructive">{{ toolMessage }}</p>
         <div class="overflow-hidden rounded-xl border bg-card">
           <Table>
             <TableHeader>
@@ -306,6 +340,8 @@ const onCategoriesChanged = () => {
 
     <StockSheet v-model:open="stockOpen" :product="stockProduct" @saved="load" />
     <BulkPriceDialog v-model:open="bulkOpen" :query="query" @done="load" />
+    <ImportDialog v-model:open="importOpen" @imported="onSaved(); loadCategories()" />
+    <LabelsDialog v-model:open="labelsOpen" :query="query" />
     <ProductSheet
       v-model:open="sheetOpen"
       :product-id="editingId"
