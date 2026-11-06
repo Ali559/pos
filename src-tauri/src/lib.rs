@@ -25,6 +25,8 @@ mod settings;
 mod shifts;
 mod staff;
 mod stock;
+mod stockcount;
+mod suppliers;
 
 use std::sync::Arc;
 
@@ -121,6 +123,16 @@ pub fn run() {
             commands::update_customer,
             commands::record_customer_payment,
             commands::adjust_customer_balance,
+            commands::create_supplier,
+            commands::update_supplier,
+            commands::receive_delivery,
+            commands::pay_supplier,
+            commands::adjust_supplier_balance,
+            commands::start_stock_count,
+            commands::record_count,
+            commands::remove_count_item,
+            commands::apply_stock_count,
+            commands::cancel_stock_count,
             commands::backup_status,
             commands::backup_now,
             commands::seed_demo_data,

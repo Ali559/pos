@@ -7,7 +7,7 @@ use tauri::AppHandle;
 
 use crate::ctx::Ctx;
 use crate::error::{Error, Result};
-use crate::{auth, backup, catalog, customers, expenses, export, lookup, notifications, printing, query, returns, sales, scale, settings, shifts, staff, stock};
+use crate::{auth, backup, catalog, customers, expenses, export, lookup, notifications, printing, query, returns, sales, scale, settings, shifts, staff, stock, stockcount, suppliers};
 
 macro_rules! commands {
     ($( $name:ident $( ($args:ty) )? -> $out:ty => $f:path; )*) => {
@@ -103,6 +103,18 @@ commands! {
     update_customer (customers::UpdateCustomerArgs) -> () => customers::update_customer;
     record_customer_payment (customers::PaymentArgs) -> customers::PaymentResult => customers::record_customer_payment;
     adjust_customer_balance (customers::AdjustArgs) -> f64 => customers::adjust_customer_balance;
+
+    create_supplier (suppliers::SupplierInput) -> i64 => suppliers::create_supplier;
+    update_supplier (suppliers::UpdateSupplierArgs) -> () => suppliers::update_supplier;
+    receive_delivery (suppliers::DeliveryArgs) -> suppliers::DeliveryResult => suppliers::receive_delivery;
+    pay_supplier (suppliers::SupplierPaymentArgs) -> f64 => suppliers::pay_supplier;
+    adjust_supplier_balance (suppliers::SupplierAdjustArgs) -> f64 => suppliers::adjust_supplier_balance;
+
+    start_stock_count (stockcount::StartCountArgs) -> i64 => stockcount::start_stock_count;
+    record_count (stockcount::RecordCountArgs) -> stockcount::Counted => stockcount::record_count;
+    remove_count_item (stockcount::CountItemArgs) -> () => stockcount::remove_count_item;
+    apply_stock_count (stockcount::CountIdArgs) -> stockcount::Applied => stockcount::apply_stock_count;
+    cancel_stock_count (stockcount::CountIdArgs) -> () => stockcount::cancel_stock_count;
 
     backup_status -> backup::BackupStatus => backup::backup_status;
     backup_now -> backup::BackupFile => backup::backup_now;

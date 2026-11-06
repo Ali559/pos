@@ -77,6 +77,12 @@ pub fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0011_customers.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 12,
+            description: "suppliers",
+            sql: include_str!("../migrations/0012_suppliers.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

@@ -146,7 +146,8 @@ pub async fn clean_unused(ctx: &Ctx) -> Result<usize> {
            AND NOT EXISTS (SELECT 1 FROM product_media WHERE media_id = m.id)
            AND NOT EXISTS (SELECT 1 FROM categories WHERE image_media_id = m.id)
            AND NOT EXISTS (SELECT 1 FROM users WHERE photo_media_id = m.id)
-           AND NOT EXISTS (SELECT 1 FROM expenses WHERE receipt_media_id = m.id)",
+           AND NOT EXISTS (SELECT 1 FROM expenses WHERE receipt_media_id = m.id)
+           AND NOT EXISTS (SELECT 1 FROM deliveries WHERE invoice_media_id = m.id)",
     )
     .fetch_all(&ctx.pool)
     .await?;

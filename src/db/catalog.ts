@@ -38,6 +38,8 @@ export interface Product {
   name: string;
   barcode: string | null;
   price: number;
+  /** Last cost (per product unit) */
+  cost: number;
   stock: number;
   minStock: number;
   unit: string;
@@ -84,6 +86,7 @@ export const listCategories = async (includeArchived = false): Promise<Category[
 const PRODUCT_COLUMNS = `
   p.id, p.sku, p.name, p.barcode,
   p.selling_price AS price,
+  p.cost_price AS cost,
   p.stock_quantity AS stock,
   p.min_stock_level AS minStock,
   p.unit, p.icon_key AS iconKey, p.is_active AS isActive,

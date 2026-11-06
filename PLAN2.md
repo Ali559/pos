@@ -92,19 +92,25 @@ Built 2026-11-07 (migration `0011`, `src-tauri/src/customers.rs`, Customers scre
 - **Reports.** End of shift shows debt paid back in cash and what was sold on account. Analytics → payments shows "On account" as a method, plus debt paid back in the range and what customers owe right now.
 - **Permissions.** `customers.view`, `customers.credit` (sell on account, take repayments, add a customer at the till) for Manager and Cashier; `customers.edit` (edit, set limits, adjust balances) and `customers.over_limit` for Manager. A cashier's new customer gets no credit limit.
 
-## 10. Suppliers and stock ⬜
+## 10. Suppliers and stock ✅
 
-`suppliers` and `product_suppliers` exist with no screens.
+Built 2026-11-07 (migration `0012`, `src-tauri/src/suppliers.rs` and `stockcount.rs`, Suppliers screen, Inventory → Stock count). The screens were checked in the app; receiving, paying and applying a count are covered by tests but haven't been done on real data yet.
 
-| Item | Size | Notes |
+| Item | Size | Status |
 | --- | --- | --- |
-| Suppliers screen | S | Name, phone, what they supply, balance owed to them. |
-| Receiving against a supplier | M | One delivery = many lines (product, quantity or cartons, cost, expiry). Updates cost price and stock in one step; optional invoice photo. |
-| Reorder suggestions | S | Items under `min_stock_level`, grouped by supplier, with a suggested quantity from recent sales. Export/print as an order to send. |
-| Stock count | M | Scan a shelf or category, compare with the system, apply the differences in one batch with a reason. Can be paused and resumed. |
-| Cost method | S | Decide between last cost and average cost for margins once receiving exists. |
+| Suppliers screen | S | ✅ |
+| Receiving against a supplier | M | ✅ |
+| Reorder suggestions | S | ✅ |
+| Stock count | M | ✅ |
+| Cost method | S | ✅ last cost |
 
----
+**How it works**
+- **Suppliers** (new item in the side rail): name, contact person, phone, notes, how many products they supply, last delivery, and what the shop owes them. Their account shows every delivery and payment with a running balance; *Pay* records a payment from **the till** (comes out of the drawer, shown at end of shift), **other cash** or **bank**. *Adjust* is for old unpaid invoices from before the app.
+- **Receive delivery**: pick the supplier (or none, for stock bought at the market, which must be paid in full), invoice number and an optional photo of the invoice, then scan or search the products. Each line has quantity (singles or packs), cost and expiry. Saving adds stock as batches (so expiry alerts work), sets each product's cost to this delivery's cost (**last cost**), links the product to the supplier (the first one becomes its main supplier), and puts whatever wasn't paid on the supplier's account. Deliveries are listed with their lines.
+- **Reorder**: everything at or under its reorder level, grouped by its main supplier, with a suggested quantity that covers two weeks of sales (at least twice the reorder level), rounded up to whole packs, and an estimated cost. *Copy order* puts a ready message on the clipboard for WhatsApp/Viber; *Export* writes a CSV.
+- **Stock count** (Inventory tab): name it, optionally limit it to a category, then scan (each scan adds one; pack barcodes add the pack) or type counts. Filters for not counted / differences / all. It can be left and continued later. *Apply* moves stock by counted − what the system said when it was counted, so sales during the count aren't counted twice; losses come out of batches, finds go in as a batch, all logged as corrections.
+- **Money stays right**: payments to suppliers from the till are negative cash payments, so expected cash at end of shift goes down and they're shown on their own line; they're kept out of the sales payment split in analytics.
+- **Permissions**: `suppliers.view`, `suppliers.edit` (suppliers, receiving from them), `suppliers.pay` (dangerous: paying and adjusting) for Manager; `inventory.count` for Manager and Cashier. Applying a count needs `inventory.adjust_stock`.
 
 ## 11. Pricing and promotions ⬜
 

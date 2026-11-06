@@ -201,7 +201,7 @@ export const paymentSplit = (f: Filters) => {
      LEFT JOIN sales s ON s.id = pay.sale_id
      LEFT JOIN returns r ON r.id = pay.return_id
      WHERE pay.payment_date >= $1 AND pay.payment_date < $2 AND pay.payment_method <> 'exchange'
-       AND pay.ledger_id IS NULL
+       AND (pay.sale_id IS NOT NULL OR pay.return_id IS NOT NULL) -- not debt repayments or supplier payouts
        AND (s.id IS NULL OR s.payment_status <> 'pending')${user}
      GROUP BY pay.payment_method ORDER BY amount DESC`,
     params,

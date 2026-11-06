@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import StockCountTab from "@/components/catalog/StockCountTab.vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { watchDebounced } from "@vueuse/core";
 import { ChevronLeft, ChevronRight, PackagePlus, Pencil, Plus, Search } from "lucide-vue-next";
@@ -131,6 +132,7 @@ const onCategoriesChanged = () => {
         <TabsTrigger value="products">{{ $t("catalog.tabs.products") }}</TabsTrigger>
         <TabsTrigger value="categories">{{ $t("catalog.tabs.categories") }}</TabsTrigger>
         <TabsTrigger v-if="canEdit" value="quick">{{ $t("catalog.tabs.quickAdd") }}</TabsTrigger>
+        <TabsTrigger v-if="auth.can('inventory.count')" value="count">{{ $t("catalog.tabs.count") }}</TabsTrigger>
       </TabsList>
 
       <TabsContent value="products">
@@ -281,6 +283,10 @@ const onCategoriesChanged = () => {
 
       <TabsContent v-if="canEdit" value="quick">
         <QuickAddTab :categories="categories" @changed="onSaved" />
+      </TabsContent>
+
+      <TabsContent v-if="auth.can('inventory.count')" value="count">
+        <StockCountTab :categories="categories" @applied="load" />
       </TabsContent>
     </Tabs>
 
