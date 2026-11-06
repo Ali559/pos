@@ -7,6 +7,7 @@ mod bridge;
 mod catalog;
 mod commands;
 mod ctx;
+mod customers;
 mod db;
 mod error;
 mod expenses;
@@ -116,6 +117,10 @@ pub fn run() {
             commands::authorize_export,
             commands::lookup_barcode,
             commands::resolve_scan,
+            commands::create_customer,
+            commands::update_customer,
+            commands::record_customer_payment,
+            commands::adjust_customer_balance,
             commands::backup_status,
             commands::backup_now,
             commands::seed_demo_data,

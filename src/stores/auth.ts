@@ -72,6 +72,7 @@ export const useAuth = () => ({
 export const MAIN_ROUTES = [
   { path: "/main/point-of-sale", permission: "sales.sell" },
   { path: "/main/inventory", permission: "inventory.view" },
+  { path: "/main/customers", permission: "customers.view" },
   { path: "/main/analytics", permission: "analytics.view" },
   { path: "/main/expenses", permission: "expenses.view" },
   { path: "/main/staff", permission: "staff.view" },

@@ -59,6 +59,16 @@ pub struct CheckoutArgs {
     /// Manager approval for typed prices
     #[serde(default)]
     pub open_price_override_token: Option<String>,
+    /// Who's buying (optional; needed to leave anything on account)
+    #[serde(default)]
+    pub customer_id: Option<i64>,
+    /// Left on the customer's account (قەرز); the rest is paid with
+    /// `payment_method`
+    #[serde(default)]
+    pub on_account: f64,
+    /// Manager approval for going over the customer's credit limit
+    #[serde(default)]
+    pub over_limit_override_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -75,6 +85,8 @@ pub struct SaleResult {
     /// Exchange: value of what came back, and what was paid back on top
     pub returned: f64,
     pub refunded: f64,
+    /// Left on the customer's account
+    pub on_account: f64,
 }
 
 /// Dinar amounts have no useful fraction; other currencies keep cents.
@@ -135,8 +147,11 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
             return Err(Error::Rule("negative_amount"));
         }
     }
-    if !(args.cart_discount >= 0.0) || args.tendered.is_some_and(|t| !(t >= 0.0)) {
+    if !(args.cart_discount >= 0.0) || args.tendered.is_some_and(|t| !(t >= 0.0)) || !(args.on_account >= 0.0) {
         return Err(Error::Rule("negative_amount"));
+    }
+    if args.on_account > 0.0 && args.customer_id.is_none() {
+        return Err(Error::Rule("customer_required"));
     }
 
     let (tax_rate,): (f64,) = sqlx::query_as(
@@ -298,7 +313,20 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     };
     let returned = exchange.as_ref().map_or(0.0, |e| e.total);
     let credit = returned.min(total);
-    let due = total - credit;
+    // What's left after the exchange: part on account, the rest paid now
+    let on_account = round_money(args.on_account, &currency);
+    if on_account > total - credit + 1e-9 {
+        return Err(Error::Rule("on_account_too_large"));
+    }
+    if let Some(customer) = args.customer_id {
+        if on_account > 0.0 {
+            crate::customers::check_on_account(ctx, &mut tx, &actor, customer, on_account, args.over_limit_override_token.as_deref()).await?;
+        } else {
+            let found: Option<(i64,)> = sqlx::query_as("SELECT id FROM customers WHERE id = $1").bind(customer).fetch_optional(&mut *tx).await?;
+            found.ok_or(Error::NotFound)?;
+        }
+    }
+    let due = total - credit - on_account;
     let (tendered, change) = match (args.payment_method.as_str(), args.tendered) {
         ("cash", Some(t)) if due > 0.0 && t < due => return Err(Error::Rule("tendered_short")),
         ("cash", Some(t)) if due > 0.0 => (Some(t), Some(round_money(t - due, &currency))),
@@ -308,8 +336,8 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
 
     let placeholder = format!("tmp-{}", uuid::Uuid::new_v4());
     let id = sqlx::query(
-        "INSERT INTO sales (receipt_number, sale_date, user_id, shift_id, subtotal, discount_amount, tax_amount, total_amount, approved_by, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $2)",
+        "INSERT INTO sales (receipt_number, sale_date, user_id, shift_id, subtotal, discount_amount, tax_amount, total_amount, approved_by, customer_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $2)",
     )
     .bind(&placeholder)
     .bind(&at)
@@ -320,6 +348,7 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     .bind(tax)
     .bind(total)
     .bind(approved_by)
+    .bind(args.customer_id)
     .execute(&mut *tx)
     .await?
     .last_insert_rowid();
@@ -355,7 +384,30 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
             stock::consume_batches(&mut tx, l.product_id, l.qty, block_expired.then_some(today.as_str())).await?;
         }
     }
-    if due > 0.0 || exchange.is_none() {
+    if on_account > 0.0 {
+        let customer_id = args.customer_id.ok_or(Error::Rule("customer_required"))?;
+        sqlx::query("INSERT INTO payments (sale_id, payment_method, amount, shift_id, payment_date) VALUES ($1, 'credit', $2, $3, $4)")
+            .bind(id)
+            .bind(on_account)
+            .bind(shift_id)
+            .bind(&at)
+            .execute(&mut *tx)
+            .await?;
+        crate::customers::write_entry(&mut tx, crate::customers::Entry {
+            customer_id,
+            kind: "sale",
+            amount: on_account,
+            sale_id: Some(id),
+            return_id: None,
+            method: None,
+            note: None,
+            user_id: actor.user_id,
+            shift_id,
+            at: &at,
+        })
+        .await?;
+    }
+    if due > 0.0 || (exchange.is_none() && on_account == 0.0) {
         sqlx::query(
             "INSERT INTO payments (sale_id, payment_method, amount, tendered, change_given, shift_id, payment_date)
              VALUES ($1, $2, $3, $4, $5, $6, $7)",
@@ -398,11 +450,11 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
         "sale",
         "sales",
         Some(id),
-        &serde_json::json!({ "total": total, "items": lines.len(), "discount": discount, "approvedBy": approved_by }),
+        &serde_json::json!({ "total": total, "items": lines.len(), "discount": discount, "approvedBy": approved_by, "customer": args.customer_id, "onAccount": on_account }),
     )
     .await?;
     notifications::refresh_quietly(ctx).await;
-    Ok(SaleResult { id, receipt_number, subtotal, discount, tax, total, tendered, change, returned, refunded })
+    Ok(SaleResult { id, receipt_number, subtotal, discount, tax, total, tendered, change, returned, refunded, on_account })
 }
 
 fn items_sale(args: &CheckoutArgs) -> Option<i64> {
@@ -508,6 +560,9 @@ pub mod tests {
             exchange: None,
             refund_override_token: None,
             open_price_override_token: None,
+            customer_id: None,
+            on_account: 0.0,
+            over_limit_override_token: None,
         }
     }
 
@@ -637,6 +692,9 @@ pub mod tests {
                 exchange: None,
                 refund_override_token: None,
                 open_price_override_token: None,
+                customer_id: None,
+                on_account: 0.0,
+                over_limit_override_token: None,
             })
             .await
             .unwrap();

@@ -26,7 +26,9 @@ const pinDialog = ref<InstanceType<typeof ManagerPinDialog> | null>(null);
 
 const rows = ref<{ id: number; qty: number; restock: boolean }[]>([]);
 const reason = ref("");
-const method = ref<"cash" | "card">("cash");
+const method = ref<"cash" | "card" | "credit">("cash");
+// A sale with a customer can be refunded onto their account (less debt)
+const methods = computed(() => (props.sale.customer_id ? (["cash", "card", "credit"] as const) : (["cash", "card"] as const)));
 const busy = ref(false);
 const error = ref("");
 
@@ -34,7 +36,7 @@ watch(open, (isOpen) => {
   if (!isOpen) return;
   rows.value = props.sale.lines.map((l) => ({ id: l.id, qty: 0, restock: true }));
   reason.value = "";
-  method.value = props.sale.method === "card" ? "card" : "cash";
+  method.value = props.sale.method === "card" ? "card" : props.sale.method === "credit" ? "credit" : "cash";
   error.value = "";
 });
 
@@ -154,9 +156,9 @@ const submit = async () => {
           </div>
           <div class="space-y-2">
             <Label>{{ $t("returns.refundBy") }}</Label>
-            <div class="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1" role="radiogroup">
+            <div class="grid gap-1 rounded-lg bg-muted p-1" :class="methods.length === 3 ? 'grid-cols-3' : 'grid-cols-2'" role="radiogroup">
               <button
-                v-for="m in ['cash', 'card'] as const"
+                v-for="m in methods"
                 :key="m"
                 type="button"
                 role="radio"

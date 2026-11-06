@@ -1,6 +1,7 @@
 import { nextTick, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getSale, type SaleDetail } from "@/db/sales";
+import type { Customer, LedgerEntry } from "@/db/customers";
 import { getSetting } from "@/db/settings";
 import { inDesktopApp } from "@/lib/ipc";
 import { call } from "@/lib/ipc";
@@ -66,6 +67,24 @@ export const printReceipt = async (saleId: number, opts: { copy?: boolean; openD
   }
 };
 
+/** A customer's statement: every entry with the running balance. Printed
+ *  through the print dialog on the receipt paper width. */
+export const printingStatement = ref<{ customer: Customer; entries: LedgerEntry[]; width: 58 | 80 } | null>(null);
+
+export const printStatement = async (customer: Customer, entries: LedgerEntry[]) => {
+  const shop = useShop();
+  await shop.load();
+  const width = (await getSetting("receipt_width")) === "58" ? (58 as const) : (80 as const);
+  printingStatement.value = { customer, entries, width };
+  await nextTick();
+  try {
+    if (inDesktopApp) await invoke("print_receipt");
+    else window.print();
+  } finally {
+    setTimeout(() => (printingStatement.value = null), 1500);
+  }
+};
+
 /** A sample receipt to check a printer before saving it. */
 export const printTestPage = async (target: string) => {
   const shop = useShop();
@@ -76,6 +95,7 @@ export const printTestPage = async (target: string) => {
     subtotal: 1500, discount: 0, tax: 0, total: 1500, status: "completed",
     method: "cash", tendered: 2000, change: 500, refunded: 0,
     payments: [{ method: "cash", amount: 1500, tendered: 2000 }],
+    customer_id: null, customer_name: null, customer_balance: null,
     lines: [{ id: 0, product_id: 0, name: "١٢٣ ABC کوردی عربي", quantity: 2, unit_price: 750, discount: 0, subtotal: 1500, tax_rate: 0, returned: 0, unit: "piece", unit_name: null, unit_factor: null }],
     returns: [],
   };

@@ -179,6 +179,14 @@ export const categorySales = (f: Filters) => {
 /** Payments are per sale, so a category filter doesn't apply here. Refunds
  *  are negative payments, counted on the day they were paid out; exchange
  *  credit moves between a return and a sale and nets to zero, so it's left out. */
+/** Debt paid back in the range (money in that isn't a sale) */
+export const debtRepaid = async (f: Filters) =>
+  (await select<{ amount: number }>(
+    `SELECT COALESCE(SUM(amount), 0) AS amount FROM payments
+     WHERE ledger_id IS NOT NULL AND payment_date >= $1 AND payment_date < $2${f.userId ? " AND shift_id IN (SELECT id FROM shifts WHERE user_id = $3)" : ""}`,
+    f.userId ? [toUtc(f.range.from), toUtc(f.range.to), f.userId] : [toUtc(f.range.from), toUtc(f.range.to)],
+  ))[0]?.amount ?? 0;
+
 export const paymentSplit = (f: Filters) => {
   const params: unknown[] = [toUtc(f.range.from), toUtc(f.range.to)];
   let user = "";
@@ -193,6 +201,7 @@ export const paymentSplit = (f: Filters) => {
      LEFT JOIN sales s ON s.id = pay.sale_id
      LEFT JOIN returns r ON r.id = pay.return_id
      WHERE pay.payment_date >= $1 AND pay.payment_date < $2 AND pay.payment_method <> 'exchange'
+       AND pay.ledger_id IS NULL
        AND (s.id IS NULL OR s.payment_status <> 'pending')${user}
      GROUP BY pay.payment_method ORDER BY amount DESC`,
     params,

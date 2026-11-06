@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import {
+  BookUser,
   ChartColumn,
   Clock,
   LogOut,
@@ -29,6 +30,7 @@ const auth = useAuth();
 const meta = {
   "/main/point-of-sale": { icon: ScanBarcode, key: "sidebar.pointOfSale" },
   "/main/inventory": { icon: Package, key: "sidebar.inventory" },
+  "/main/customers": { icon: BookUser, key: "sidebar.customers" },
   "/main/analytics": { icon: ChartColumn, key: "sidebar.analytics" },
   "/main/expenses": { icon: Wallet, key: "sidebar.expenses" },
   "/main/staff": { icon: UsersRound, key: "sidebar.staff" },

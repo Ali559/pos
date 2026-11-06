@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { debtTotals } from "@/db/customers";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
@@ -31,6 +32,7 @@ import {
   expensesByType,
   heatmap,
   paymentSplit,
+  debtRepaid,
   productSales,
   salesUsers,
   series,
@@ -105,6 +107,8 @@ const products = ref<ProductRow[]>([]);
 const slow = ref<Awaited<ReturnType<typeof slowMovers>>>([]);
 const cats = ref<Awaited<ReturnType<typeof categorySales>>>([]);
 const pays = ref<Awaited<ReturnType<typeof paymentSplit>>>([]);
+// Debt: paid back in the range, and owed by customers right now
+const debt = ref({ repaid: 0, owed: 0, people: 0 });
 const staff = ref<EmployeeRow[]>([]);
 const expenses = ref<ExpenseSum[]>([]);
 
@@ -142,6 +146,8 @@ const load = async () => {
     slow.value = sl;
     cats.value = c;
     pays.value = py;
+    const [repaid, owed] = await Promise.all([debtRepaid(f), debtTotals()]);
+    debt.value = { repaid, owed: owed.total, people: owed.people };
     staff.value = st;
     expenses.value = ex;
   } catch (e) {
@@ -426,6 +432,10 @@ const exportExpenses = () =>
                   </div>
                 </li>
               </ul>
+              <dl v-if="debt.repaid || debt.owed" class="mt-4 space-y-1 border-t pt-3 text-sm">
+                <div class="flex justify-between"><dt class="text-muted-foreground">{{ $t("analytics.debtRepaid") }}</dt><dd class="num font-medium">{{ formatCurrency(debt.repaid) }}</dd></div>
+                <div class="flex justify-between"><dt class="text-muted-foreground">{{ $t("analytics.debtOwed", { n: debt.people }) }}</dt><dd class="num font-medium text-destructive">{{ formatCurrency(debt.owed) }}</dd></div>
+              </dl>
               <p v-if="categoryId !== 'all'" class="mt-3 text-xs text-muted-foreground">{{ $t("analytics.paymentsIgnoreCategory") }}</p>
             </section>
           </div>

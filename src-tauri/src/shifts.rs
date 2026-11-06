@@ -114,6 +114,11 @@ pub struct ShiftSummary {
     /// Negative: money paid back out
     pub cash_refunds: f64,
     pub card_refunds: f64,
+    /// Customers paying off debt (not sales)
+    pub debt_paid_cash: f64,
+    pub debt_paid_card: f64,
+    /// Sold on account this shift (no money taken)
+    pub on_account: f64,
     /// What the drawer should hold now
     pub expected_cash: f64,
 }
@@ -127,12 +132,16 @@ async fn summary_for(ctx: &Ctx, user_id: i64) -> Result<Option<ShiftSummary>> {
         .bind(drawer_id)
         .fetch_one(&ctx.pool)
         .await?;
-    let (sales, cash_sales, card_sales, cash_refunds, card_refunds): (i64, f64, f64, f64, f64) = sqlx::query_as(
+    #[allow(clippy::type_complexity)]
+    let (sales, cash_sales, card_sales, cash_refunds, card_refunds, debt_paid_cash, debt_paid_card, on_account): (i64, f64, f64, f64, f64, f64, f64, f64) = sqlx::query_as(
         "SELECT COUNT(DISTINCT CASE WHEN amount > 0 THEN sale_id END),
-                COALESCE(SUM(CASE WHEN payment_method = 'cash' AND amount > 0 THEN amount END), 0.0),
-                COALESCE(SUM(CASE WHEN payment_method = 'card' AND amount > 0 THEN amount END), 0.0),
+                COALESCE(SUM(CASE WHEN ledger_id IS NULL AND payment_method = 'cash' AND amount > 0 THEN amount END), 0.0),
+                COALESCE(SUM(CASE WHEN ledger_id IS NULL AND payment_method = 'card' AND amount > 0 THEN amount END), 0.0),
                 COALESCE(SUM(CASE WHEN payment_method = 'cash' AND amount < 0 THEN amount END), 0.0),
-                COALESCE(SUM(CASE WHEN payment_method = 'card' AND amount < 0 THEN amount END), 0.0)
+                COALESCE(SUM(CASE WHEN payment_method = 'card' AND amount < 0 THEN amount END), 0.0),
+                COALESCE(SUM(CASE WHEN ledger_id IS NOT NULL AND payment_method = 'cash' THEN amount END), 0.0),
+                COALESCE(SUM(CASE WHEN ledger_id IS NOT NULL AND payment_method = 'card' THEN amount END), 0.0),
+                COALESCE(SUM(CASE WHEN payment_method = 'credit' THEN amount END), 0.0)
          FROM payments WHERE shift_id = $1",
     )
     .bind(shift.id)
@@ -148,7 +157,10 @@ async fn summary_for(ctx: &Ctx, user_id: i64) -> Result<Option<ShiftSummary>> {
         card_sales,
         cash_refunds,
         card_refunds,
-        expected_cash: float + cash_sales + cash_refunds,
+        debt_paid_cash,
+        debt_paid_card,
+        on_account,
+        expected_cash: float + cash_sales + cash_refunds + debt_paid_cash,
     }))
 }
 

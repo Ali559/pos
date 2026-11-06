@@ -377,7 +377,7 @@ mod tests {
                 role: RoleInput {
                     name: "Manager".into(),
                     description: None,
-                    permissions: ["staff.edit", "staff.view", "roles.manage", "sales.sell", "sales.reprint", "sales.open_price", "inventory.view"]
+                    permissions: ["staff.edit", "staff.view", "roles.manage", "sales.sell", "sales.reprint", "sales.open_price", "inventory.view", "customers.view", "customers.credit"]
                         .map(String::from)
                         .to_vec(),
                 },

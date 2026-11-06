@@ -30,6 +30,9 @@ const barcode = computed(() => (p.value ? code128Bars(p.value.sale.receipt_numbe
         <dt>{{ $t("receipt.number") }}</dt><dd class="text-end" dir="ltr">{{ p.sale.receipt_number }}</dd>
         <dt>{{ $t("receipt.date") }}</dt><dd class="text-end">{{ formatDateTime(new Date(p.sale.sale_date)) }}</dd>
         <dt>{{ $t("receipt.cashier") }}</dt><dd class="text-end">{{ p.sale.cashier }}</dd>
+        <template v-if="p.sale.customer_name">
+          <dt>{{ $t("receipt.customer") }}</dt><dd class="text-end"><bdi>{{ p.sale.customer_name }}</bdi></dd>
+        </template>
       </dl>
       <div class="rule my-1.5" />
 
@@ -69,6 +72,9 @@ const barcode = computed(() => (p.value ? code128Bars(p.value.sale.receipt_numbe
         </template>
         <template v-if="p.sale.refunded > 0">
           <dt>{{ $t("receipt.refunded") }}</dt><dd class="text-end">−{{ formatCurrency(p.sale.refunded) }}</dd>
+        </template>
+        <template v-if="p.sale.customer_balance">
+          <dt class="pt-1 font-bold">{{ $t("receipt.balanceOwed") }}</dt><dd class="pt-1 text-end font-bold">{{ formatCurrency(p.sale.customer_balance) }}</dd>
         </template>
       </dl>
 

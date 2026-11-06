@@ -9,6 +9,7 @@ import {
   History,
   Loader2,
   Minus,
+  NotebookPen,
   Package,
   Percent,
   Plus,
@@ -17,8 +18,12 @@ import {
   ScanSearch,
   Trash2,
   Undo2,
+  UserRound,
   X,
 } from "lucide-vue-next";
+import CustomerPicker from "@/components/customers/CustomerPicker.vue";
+import OnAccountDialog from "@/components/customers/OnAccountDialog.vue";
+import { getCustomer, type Customer } from "@/db/customers";
 import HeldSales, { type HeldCart } from "@/components/sales/HeldSales.vue";
 import OpeningCashDialog from "@/components/sales/OpeningCashDialog.vue";
 import { useReturnCart } from "@/stores/returnCart";
@@ -61,6 +66,8 @@ interface SaleResult {
   /** Exchange: value of what came back, and what was paid back on top */
   returned: number;
   refunded: number;
+  /** Left on the customer's account */
+  onAccount: number;
 }
 
 /** What the done panel shows: a sale (maybe an exchange) or a plain refund */
@@ -75,6 +82,15 @@ const cashDialog = ref<InstanceType<typeof CashDialog> | null>(null);
 const weightDialog = ref<InstanceType<typeof WeightDialog> | null>(null);
 const openPriceDialog = ref<InstanceType<typeof OpenPriceDialog> | null>(null);
 const priceCheckOpen = ref(false);
+const onAccountDialog = ref<InstanceType<typeof OnAccountDialog> | null>(null);
+// Who's buying: needed to sell on account (قەرز)
+const customer = ref<Customer | null>(null);
+const pickerOpen = ref(false);
+const canAccount = computed(() => auth.can("customers.credit"));
+const pickCustomer = (c: Customer) => {
+  customer.value = c;
+  focusScan();
+};
 const autoPrint = ref(false);
 const returns = useReturnCart();
 // Scans go to the items coming back instead of the cart
@@ -95,7 +111,7 @@ const products = ref<Product[]>([]);
 const catalogLoaded = ref(false);
 const activeCategory = ref<number | null>(null);
 const activeSub = ref<number | null>(null);
-const payment = ref<"cash" | "card">("cash");
+const payment = ref<"cash" | "card" | "account">("cash");
 const lastAdded = ref<string | null>(null);
 // The last completed sale or refund, shown on the empty receipt until the next scan
 const lastSale = ref<Done | null>(null);
@@ -358,6 +374,8 @@ const removeFromCart = (key: string) => {
 const resetCart = () => {
   cartItems.value = [];
   cartDiscount.value = 0;
+  customer.value = null;
+  if (payment.value === "account") payment.value = "cash";
   focusScan();
 };
 
@@ -377,11 +395,13 @@ const cancelReturn = () => {
 };
 
 // Hold: the cart goes on a shelf; the register is free for the next customer
-const heldCart = computed<HeldCart>(() => ({ items: cartItems.value, cartDiscount: cartDiscount.value }));
-const resumeHeld = (cart: HeldCart) => {
+const heldCart = computed<HeldCart>(() => ({ items: cartItems.value, cartDiscount: cartDiscount.value, customerId: customer.value?.id ?? null }));
+const resumeHeld = async (cart: HeldCart) => {
   lastSale.value = null;
   cartItems.value = cart.items.map((i) => normalizeItem({ ...i }));
   cartDiscount.value = cart.cartDiscount;
+  // Looked up again: the balance may have changed while it was held
+  customer.value = cart.customerId ? await getCustomer(cart.customerId) : null;
   focusScan();
 };
 
@@ -420,7 +440,20 @@ const checkout = async () => {
   if (!cartItems.value.length) return refund();
 
   let tendered: number | null = null;
-  if (payment.value === "cash" && net.value > 0) {
+  let onAccount = 0;
+  let overLimitOverrideToken: string | null | undefined = null;
+  if (payment.value === "account") {
+    // Part paid in cash now (maybe nothing), the rest on the customer's account
+    if (!customer.value || net.value <= 0) return;
+    const paidNow = await onAccountDialog.value?.ask({ due: net.value, customer: customer.value });
+    if (paidNow == null) return focusScan();
+    onAccount = net.value - paidNow;
+    const limit = customer.value.credit_limit;
+    if (limit != null && customer.value.balance + onAccount > limit + 1e-6) {
+      overLimitOverrideToken = await approve("customers.over_limit");
+      if (overLimitOverrideToken === undefined) return focusScan();
+    }
+  } else if (payment.value === "cash" && net.value > 0) {
     tendered = (await cashDialog.value?.ask(net.value)) ?? null;
     if (tendered === null) return focusScan();
   }
@@ -443,8 +476,11 @@ const checkout = async () => {
         note: i.note,
       })),
       cartDiscount: cartDiscount.value,
-      paymentMethod: payment.value,
+      paymentMethod: payment.value === "account" ? "cash" : payment.value,
       tendered,
+      customerId: customer.value?.id ?? null,
+      onAccount,
+      overLimitOverrideToken,
       overrideToken,
       exchange: returns.active.value ? returns.payload() : null,
       refundOverrideToken,
@@ -454,7 +490,8 @@ const checkout = async () => {
     resetCart();
     returns.clear();
     returnMode.value = false;
-    if (autoPrint.value) print(sale.id, payment.value === "cash");
+    const tookCash = payment.value === "cash" || (payment.value === "account" && sale.total - sale.returned > sale.onAccount);
+    if (autoPrint.value) print(sale.id, tookCash);
     await reloadProducts();
   } catch (e) {
     chargeError.value = errorMessage(e);
@@ -470,7 +507,7 @@ const refund = async () => {
   try {
     const r = await call<{ id: number; refund: number }>("create_return", {
       ...returns.payload(),
-      refundMethod: payment.value,
+      refundMethod: payment.value === "account" ? "cash" : payment.value,
       overrideToken,
     });
     lastSale.value = { kind: "refund", amount: r.refund };
@@ -709,6 +746,23 @@ onMounted(async () => {
           <p class="text-sm text-muted-foreground">
             {{ $t("pos.items", itemCount) }}
           </p>
+          <!-- Who's buying: optional, needed for on account -->
+          <div v-if="customer" class="mt-2 flex items-center gap-2 rounded-lg bg-muted px-2.5 py-1.5 text-sm">
+            <UserRound :size="15" class="shrink-0 text-muted-foreground" />
+            <bdi class="min-w-0 flex-1 truncate font-medium">{{ customer.name }}</bdi>
+            <span v-if="customer.balance > 0" class="num text-xs font-semibold text-destructive">{{ $t("customers.owes", { amount: formatCurrency(customer.balance) }) }}</span>
+            <button type="button" class="rounded p-0.5 text-muted-foreground hover:bg-card hover:text-foreground" :aria-label="$t('customers.remove')" @click="customer = null; payment === 'account' && (payment = 'cash')">
+              <X :size="14" />
+            </button>
+          </div>
+          <button
+            v-else-if="auth.can('customers.view')"
+            type="button"
+            class="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            @click="pickerOpen = true"
+          >
+            <UserRound :size="15" />{{ $t("customers.addToSale") }}
+          </button>
         </header>
         <div class="rule-dashed mx-5" />
 
@@ -758,6 +812,10 @@ onMounted(async () => {
               <span v-if="lastSale.sale.change" class="mt-2 rounded-lg bg-success/10 px-4 py-2 text-success">
                 {{ $t("cash.change") }}
                 <span class="num block text-3xl font-bold">{{ formatCurrency(lastSale.sale.change) }}</span>
+              </span>
+              <span v-if="lastSale.sale.onAccount" class="mt-2 rounded-lg bg-primary/10 px-4 py-2 text-primary">
+                {{ $t("onAccount.onAccount") }}
+                <span class="num block text-3xl font-bold">{{ formatCurrency(lastSale.sale.onAccount) }}</span>
               </span>
               <span v-if="lastSale.sale.refunded" class="mt-2 rounded-lg bg-amber-500/10 px-4 py-2 text-amber-700 dark:text-amber-400">
                 {{ $t("returnCart.payBack") }}
@@ -902,12 +960,13 @@ onMounted(async () => {
         </dl>
       </div>
 
-      <fieldset class="grid grid-cols-2 gap-2">
+      <fieldset class="grid gap-2" :class="customer && canAccount ? 'grid-cols-3' : 'grid-cols-2'">
         <legend class="sr-only">{{ $t("pos.payWith") }}</legend>
         <label
           v-for="m in [
             { id: 'cash', icon: Banknote },
             { id: 'card', icon: CreditCard },
+            ...(customer && canAccount ? [{ id: 'account', icon: NotebookPen }] : []),
           ] as const"
           :key="m.id"
           class="flex h-12 cursor-pointer items-center justify-center gap-2 rounded-lg border bg-card text-sm font-medium transition-colors has-checked:border-foreground has-checked:bg-foreground has-checked:text-background has-focus-visible:ring-2 has-focus-visible:ring-ring"
@@ -967,6 +1026,8 @@ onMounted(async () => {
     <WeightDialog ref="weightDialog" />
     <OpenPriceDialog ref="openPriceDialog" />
     <PriceCheckDialog v-model:open="priceCheckOpen" />
+    <CustomerPicker v-model:open="pickerOpen" @pick="pickCustomer" />
+    <OnAccountDialog ref="onAccountDialog" />
     <OpeningCashDialog v-model:open="openingOpen" :expected="openingExpected" @counted="focusScan()" />
   </div>
 </template>

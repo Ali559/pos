@@ -290,7 +290,8 @@ pub async fn pay_out(tx: &mut Transaction<'_, Sqlite>, sale_id: Option<i64>, ret
 /// A plain return: items back, money back.
 pub async fn create_return(ctx: &Ctx, args: ReturnArgs) -> Result<ReturnResult> {
     let actor = auth::require(ctx, "sales.sell").await?;
-    if !matches!(args.refund_method.as_str(), "cash" | "card") {
+    // credit: taken off the debt of the sale's customer instead of paid out
+    if !matches!(args.refund_method.as_str(), "cash" | "card" | "credit") {
         return Err(Error::Invalid(format!("unknown refund method {}", args.refund_method)));
     }
     let currency = shop_currency(ctx).await?;
@@ -299,8 +300,32 @@ pub async fn create_return(ctx: &Ctx, args: ReturnArgs) -> Result<ReturnResult> 
 
     let mut tx = ctx.pool.begin().await?;
     let pending = prepare(ctx, &mut tx, &actor, &args.items, args.override_token.as_deref(), &currency).await?;
+    let customer = if args.refund_method == "credit" {
+        let row: Option<(Option<i64>,)> = sqlx::query_as("SELECT customer_id FROM sales WHERE id = $1")
+            .bind(pending.sale_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        Some(row.and_then(|(c,)| c).ok_or(Error::Rule("refund_needs_customer"))?)
+    } else {
+        None
+    };
     let id = write(&mut tx, &pending, actor.user_id, shift_id, &args.refund_method, &at).await?;
     pay_out(&mut tx, pending.sale_id, id, &args.refund_method, pending.total, shift_id, &at).await?;
+    if let Some(customer_id) = customer {
+        crate::customers::write_entry(&mut tx, crate::customers::Entry {
+            customer_id,
+            kind: "refund",
+            amount: -pending.total,
+            sale_id: pending.sale_id,
+            return_id: Some(id),
+            method: None,
+            note: None,
+            user_id: actor.user_id,
+            shift_id,
+            at: &at,
+        })
+        .await?;
+    }
     tx.commit().await?;
 
     audit::log(
@@ -352,6 +377,9 @@ mod tests {
                 exchange: None,
                 refund_override_token: None,
                 open_price_override_token: None,
+                customer_id: None,
+                on_account: 0.0,
+                over_limit_override_token: None,
             })
             .await
             .unwrap();

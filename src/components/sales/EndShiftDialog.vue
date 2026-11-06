@@ -22,6 +22,11 @@ interface ShiftSummary {
   cardSales: number;
   cashRefunds: number;
   cardRefunds: number;
+  /** Customers paying off debt */
+  debtPaidCash: number;
+  debtPaidCard: number;
+  /** Sold on account (no money taken) */
+  onAccount: number;
   expectedCash: number;
 }
 
@@ -82,8 +87,10 @@ const submit = async () => {
           <div class="flex justify-between"><dt class="text-muted-foreground">{{ $t("shiftEnd.float") }}</dt><dd class="num">{{ formatCurrency(summary.openingFloat) }}</dd></div>
           <div class="flex justify-between"><dt class="text-muted-foreground">{{ $t("shiftEnd.cashSales") }}</dt><dd class="num">+{{ formatCurrency(summary.cashSales) }}</dd></div>
           <div v-if="summary.cashRefunds" class="flex justify-between"><dt class="text-muted-foreground">{{ $t("shiftEnd.cashRefunds") }}</dt><dd class="num">{{ formatCurrency(summary.cashRefunds) }}</dd></div>
+          <div v-if="summary.debtPaidCash" class="flex justify-between"><dt class="text-muted-foreground">{{ $t("shiftEnd.debtPaid") }}</dt><dd class="num">+{{ formatCurrency(summary.debtPaidCash) }}</dd></div>
           <div class="flex justify-between border-t pt-2 font-semibold"><dt>{{ $t("shiftEnd.expected") }}</dt><dd class="num">{{ formatCurrency(summary.expectedCash) }}</dd></div>
-          <div class="flex justify-between pt-1 text-muted-foreground"><dt>{{ $t("shiftEnd.cardSales") }}</dt><dd class="num">{{ formatCurrency(summary.cardSales + summary.cardRefunds) }}</dd></div>
+          <div class="flex justify-between pt-1 text-muted-foreground"><dt>{{ $t("shiftEnd.cardSales") }}</dt><dd class="num">{{ formatCurrency(summary.cardSales + summary.cardRefunds + summary.debtPaidCard) }}</dd></div>
+          <div v-if="summary.onAccount" class="flex justify-between text-muted-foreground"><dt>{{ $t("shiftEnd.onAccount") }}</dt><dd class="num">{{ formatCurrency(summary.onAccount) }}</dd></div>
         </dl>
 
         <div v-if="summary" class="space-y-2">

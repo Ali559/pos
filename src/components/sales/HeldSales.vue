@@ -15,6 +15,8 @@ import type { CartItem } from "@/lib/cart";
 export interface HeldCart {
   items: CartItem[];
   cartDiscount: number;
+  /** Who was buying, if anyone */
+  customerId?: number | null;
 }
 
 const props = defineProps<{ cart: HeldCart; canHold: boolean; canResume: boolean }>();

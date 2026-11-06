@@ -2,7 +2,7 @@
 // 384 dots across 58 mm paper, 576 across 80 mm) and packs it into the
 // 1-bit rows ESC/POS expects. The browser lays out the text, so Kurdish and
 // Arabic come out shaped and right-to-left, which printer fonts can't do.
-import type { SaleDetail } from "@/db/sales";
+import { lineSold, type SaleDetail } from "@/db/sales";
 import type { ShopProfile } from "@/db/shop";
 import { code128Bars } from "@/lib/code128";
 import { formatCurrency } from "@/lib/format";
@@ -23,7 +23,6 @@ const t = (key: string, values?: Record<string, unknown>) => i18n.global.t(key, 
 // Left-to-right values (phones, receipt numbers) inside right-to-left text:
 // isolated, or the bidi algorithm reorders their digit groups
 const ltr = (s: string) => `\u2066${s}\u2069`;
-const qty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).replace(/0+$/, ""));
 
 const loadImage = (src: string) =>
   new Promise<HTMLImageElement | null>((resolve) => {
@@ -149,6 +148,7 @@ export const renderReceipt = async (
   row(t("receipt.number"), ltr(sale.receipt_number));
   row(t("receipt.date"), formatDateTime(new Date(sale.sale_date)));
   row(t("receipt.cashier"), sale.cashier);
+  if (sale.customer_name) row(t("receipt.customer"), sale.customer_name);
   rule();
 
   for (const l of sale.lines) {
@@ -158,7 +158,8 @@ export const renderReceipt = async (
       ctx.fillText(line, startX, y);
       y += Math.round(base * 1.3);
     }
-    row(`${qty(l.quantity)} × ${formatCurrency(l.unit_price)}`, formatCurrency(l.unit_price * l.quantity));
+    const sold = lineSold(l);
+    row(`${sold.label} × ${formatCurrency(sold.each)}`, formatCurrency(l.subtotal + l.discount));
     if (l.discount > 0) row(`  ${t("receipt.discount")}`, `−${formatCurrency(l.discount)}`);
   }
   rule();
@@ -170,6 +171,7 @@ export const renderReceipt = async (
   for (const p of sale.payments) row(t(`pos.${p.method}`), formatCurrency(p.tendered ?? p.amount));
   if (sale.change) row(t("cash.change"), formatCurrency(sale.change));
   if (sale.refunded > 0) row(t("receipt.refunded"), `−${formatCurrency(sale.refunded)}`);
+  if (sale.customer_balance) row(t("receipt.balanceOwed"), formatCurrency(sale.customer_balance), base, true);
 
   // Barcode of the receipt number, whole dots per module so it scans
   const { bars, width } = code128Bars(sale.receipt_number);

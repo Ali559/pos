@@ -70,19 +70,27 @@ Built 2026-11-07 (migration `0010`, `src-tauri/src/scale.rs`, checkout in `sales
 - **Misc item.** Created automatically after setup (`sku` `MISC`, in the shop's language): the price is typed at the till with an optional note ("Misc item: batteries" on the receipt). Any product can be set to *price typed at the till* and/or *don't count stock*. Typing a price needs the new `sales.open_price` permission (given to Manager and Cashier; others need a manager's PIN). Products that don't count stock never block a sale, raise stock alerts or get restocked by returns.
 - **Price check.** A button by the scan bar opens a box that shows price, pack prices, stock, and what a scale label would charge, without touching the cart.
 
-## 9. Customers and debt ⬜
+## 9. Customers and debt ✅
 
-`customers`, `sales.customer_id` and `customers.loyalty_points` exist in the schema with no screens.
+Built 2026-11-07 (migration `0011`, `src-tauri/src/customers.rs`, Customers screen). **IQD only** for now (decided 2026-11-07); a second currency is left for later.
 
-| Item | Size | Notes |
+| Item | Size | Status |
 | --- | --- | --- |
-| Customers screen | S | List, search by name or phone, create/edit, purchase history. |
-| Attach a customer to a sale | S | Search by phone at the register; shown on the receipt. |
-| Debt (قەرز) | M | Pay later or part-pay a sale as debt. A `customer_ledger` (sale, repayment, adjustment). Repayments from the register or the customer's page, a "who owes what" list, per-customer limit, printable statement, debt in end-of-shift and analytics. Permission `customers.credit`. |
-| Loyalty points | S | Earn/redeem rules in settings. Optional; ask shops whether they want it. |
-| IQD + USD | M | Show prices in both, take payment in either at a rate the shop sets (with history of rate changes), give change in IQD. Receipts show both totals. See open questions. |
+| Customers screen | S | ✅ |
+| Attach a customer to a sale | S | ✅ |
+| Debt (قەرز) | M | ✅ |
+| Loyalty points | S | ⬜ later, if shops ask for it |
+| IQD + USD | M | ⬜ later |
 
----
+**How it works**
+- **Balance = the customer's ledger.** `customer_ledger` rows are only ever added: `sale` (left on account), `payment` (paid back), `refund` (a return onto the account), `adjustment` (an opening balance from the paper notebook, or a correction, always with a reason). Positive means they owe the shop.
+- **At the till.** *Add customer* under the receipt title finds a customer by phone or name, or adds one on the spot. With a customer on the sale, a third way to pay appears: **On account**. It asks how much is paid in cash now (if anything) and puts the rest on their account. The sale's payments still add up to its total: the part on account is a `credit` payment, so reports, returns and receipts keep working. The receipt shows the customer and what they owe now.
+- **Credit limit.** Optional per customer. Going over it needs a manager's PIN (`customers.over_limit`).
+- **Repayments.** *Take payment* (Customers screen or the customer's account) records cash or card. It's a payment with no sale, linked to the ledger row, so cash repayments count in the drawer at end of shift (shown on their own line), but not as sales in analytics. Can't pay more than is owed.
+- **Returns.** A sale with a customer can be refunded *onto the account* (less debt) as well as in cash or by card.
+- **Account sheet.** Balance, limit, every entry with the running balance, *Take payment*, *Adjust balance*, *Print statement* (through the print dialog, on the receipt paper width).
+- **Reports.** End of shift shows debt paid back in cash and what was sold on account. Analytics → payments shows "On account" as a method, plus debt paid back in the range and what customers owe right now.
+- **Permissions.** `customers.view`, `customers.credit` (sell on account, take repayments, add a customer at the till) for Manager and Cashier; `customers.edit` (edit, set limits, adjust balances) and `customers.over_limit` for Manager. A cashier's new customer gets no credit limit.
 
 ## 10. Suppliers and stock ⬜
 
@@ -142,7 +150,7 @@ Built 2026-11-07 (migration `0010`, `src-tauri/src/scale.rs`, checkout in `sales
 
 ## Open questions
 
-- **Currency:** IQD only, or IQD + USD (§9)? Who sets the rate, and how often?
+- ~~**Currency:**~~ IQD only for now (decided 2026-11-07).
 - **Scale barcodes:** which scale does the shop use, and does it print weight or price in the barcode?
 - **Loyalty:** wanted, or is debt enough?
 - **Auto-update:** where will releases be hosted?

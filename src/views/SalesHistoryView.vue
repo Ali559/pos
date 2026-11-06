@@ -134,6 +134,9 @@ const reprint = (id: number) => printReceipt(id, { copy: true }).catch((e) => (e
             <p class="text-sm text-muted-foreground">
               {{ formatDateTime(new Date(selected.sale_date)) }} — {{ selected.cashier }}
             </p>
+            <p v-if="selected.customer_name" class="text-sm text-muted-foreground">
+              {{ $t("receipt.customer") }}: <bdi class="font-medium text-foreground">{{ selected.customer_name }}</bdi>
+            </p>
             <p v-if="selected.approver" class="text-sm text-muted-foreground">
               {{ $t("history.approvedBy", { name: selected.approver }) }}
             </p>

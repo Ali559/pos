@@ -3,7 +3,7 @@
 import { select, selectOne } from "./client";
 import { toUtc, type Range } from "@/lib/dateRange";
 
-export type PaymentMethod = "cash" | "card" | "exchange";
+export type PaymentMethod = "cash" | "card" | "exchange" | "credit";
 
 export type SaleStatus = "completed" | "partially_refunded" | "refunded" | "pending";
 
@@ -79,16 +79,24 @@ export interface SaleDetail {
   change: number | null;
   refunded: number;
   payments: { method: PaymentMethod; amount: number; tendered: number | null }[];
+  /** Who bought it, and what they owe now (for the receipt) */
+  customer_id: number | null;
+  customer_name: string | null;
+  customer_balance: number | null;
   lines: SaleLine[];
   returns: { id: number; return_date: string; total_refund: number; reason: string | null; user: string; method: string }[];
 }
 
-/** Positive payments, the paying method first and exchange credit last */
-const PAYMENTS_ORDER = "ORDER BY payment_method = 'exchange', id";
+/** Positive payments, the paying method first; exchange credit and what was
+ *  left on account after it */
+const PAYMENTS_ORDER = "ORDER BY payment_method IN ('exchange', 'credit'), id";
 
 export const getSale = async (id: number): Promise<SaleDetail | null> => {
   const head = await selectOne<Omit<SaleDetail, "lines" | "returns">>(
     `SELECT s.id, s.receipt_number, s.sale_date, u.full_name AS cashier, a.full_name AS approver,
+            s.customer_id, cu.name AS customer_name,
+            CASE WHEN s.customer_id IS NULL THEN NULL
+                 ELSE COALESCE((SELECT SUM(amount) FROM customer_ledger WHERE customer_id = s.customer_id), 0) END AS customer_balance,
             s.subtotal, COALESCE(s.discount_amount, 0) AS discount, COALESCE(s.tax_amount, 0) AS tax,
             s.total_amount AS total, s.payment_status AS status,
             pay.payment_method AS method, pay.tendered, pay.change_given AS change,
@@ -96,6 +104,7 @@ export const getSale = async (id: number): Promise<SaleDetail | null> => {
      FROM sales s
      JOIN users u ON u.id = s.user_id
      LEFT JOIN users a ON a.id = s.approved_by
+     LEFT JOIN customers cu ON cu.id = s.customer_id
      LEFT JOIN payments pay ON pay.id = (SELECT id FROM payments WHERE sale_id = s.id AND amount > 0 ${PAYMENTS_ORDER} LIMIT 1)
      WHERE s.id = $1`,
     [id],
