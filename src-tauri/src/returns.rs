@@ -224,7 +224,12 @@ pub async fn write(
         .bind(l.restock)
         .execute(&mut **tx)
         .await?;
-        if l.restock {
+        // Nothing to put back for products that don't count stock
+        let (tracked,): (bool,) = sqlx::query_as("SELECT track_stock FROM products WHERE id = $1")
+            .bind(l.product_id)
+            .fetch_one(&mut **tx)
+            .await?;
+        if l.restock && tracked {
             sqlx::query("UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2")
                 .bind(l.qty)
                 .bind(l.product_id)
@@ -337,8 +342,8 @@ mod tests {
             let b = create_product(&ctx, product("Chips", "2", 10.0)).await.unwrap();
             let sale = checkout(&ctx, CheckoutArgs {
                 lines: vec![
-                    CheckoutLine { product_id: a, quantity: 4.0, discount: 0.0 },
-                    CheckoutLine { product_id: b, quantity: 2.0, discount: 500.0 },
+                    CheckoutLine { product_id: a, quantity: 4.0, discount: 0.0, ..Default::default() },
+                    CheckoutLine { product_id: b, quantity: 2.0, discount: 500.0, ..Default::default() },
                 ],
                 cart_discount: 1000.0,
                 payment_method: "cash".into(),
@@ -346,6 +351,7 @@ mod tests {
                 override_token: None,
                 exchange: None,
                 refund_override_token: None,
+                open_price_override_token: None,
             })
             .await
             .unwrap();

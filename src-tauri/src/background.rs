@@ -8,7 +8,7 @@ use std::time::Duration;
 use tauri::AppHandle;
 
 use crate::ctx::Ctx;
-use crate::{backup, expenses, media, notifications};
+use crate::{backup, catalog, expenses, media, notifications};
 
 const EVERY: Duration = Duration::from_secs(60 * 60);
 
@@ -17,6 +17,10 @@ pub fn start(app: AppHandle) {
         loop {
             match Ctx::from_app(&app).await {
                 Ok(ctx) => {
+                    // Shops set up before the misc item existed get it here
+                    if let Err(e) = catalog::ensure_misc_product(&ctx).await {
+                        eprintln!("[background] misc item: {e}");
+                    }
                     if let Err(e) = expenses::generate_recurring(&ctx).await {
                         eprintln!("[background] recurring expenses: {e}");
                     }

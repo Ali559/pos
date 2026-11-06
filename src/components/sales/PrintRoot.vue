@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { code128Bars } from "@/lib/code128";
 import { formatCurrency } from "@/lib/format";
+import { lineSold } from "@/db/sales";
 import { formatDateTime } from "@/lib/locale";
 import { printing } from "@/lib/print";
 import { useShop } from "@/stores/shop";
@@ -10,7 +11,6 @@ import { useShop } from "@/stores/shop";
 const { profile } = useShop();
 const p = computed(() => printing.value);
 const barcode = computed(() => (p.value ? code128Bars(p.value.sale.receipt_number) : null));
-const qty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).replace(/0+$/, ""));
 </script>
 
 <template>
@@ -38,8 +38,8 @@ const qty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).repla
           <template v-for="l in p.sale.lines" :key="l.id">
             <tr><td colspan="2" class="pt-0.5 font-semibold"><bdi>{{ l.name }}</bdi></td></tr>
             <tr>
-              <td dir="ltr" class="text-start">{{ qty(l.quantity) }} × {{ formatCurrency(l.unit_price) }}</td>
-              <td class="text-end">{{ formatCurrency(l.unit_price * l.quantity) }}</td>
+              <td class="text-start"><bdi>{{ lineSold(l).label }}</bdi> × {{ formatCurrency(lineSold(l).each) }}</td>
+              <td class="text-end">{{ formatCurrency(l.subtotal + l.discount) }}</td>
             </tr>
             <tr v-if="l.discount > 0">
               <td class="ps-2">{{ $t("receipt.discount") }}</td>

@@ -51,17 +51,24 @@ Built 2026-11-07 (`src-tauri/src/backup.rs`, Settings → Backups, migration `00
 
 ---
 
-## 8. Selling units ⬜
+## 8. Selling units ✅
 
-| Item | Size | Notes |
+Built 2026-11-07 (migration `0010`, `src-tauri/src/scale.rs`, checkout in `sales.rs`). Packs, the misc item and price check were checked in the app; scale labels and the weight dialog have unit tests, but nobody has scanned a real scale label yet.
+
+| Item | Size | Status |
 | --- | --- | --- |
-| Packs and cartons | M | One product sold as a single, a 6-pack or a carton of 24. Each pack size has its own barcode and price; selling a carton takes 24 off stock. A `product_units` table (product, name, factor, barcode, price). Receiving stock can be done in cartons too. |
-| Decimal quantities | S | `products.unit` can already be `kg`/`liter`; the till only sells whole numbers. Allow quantities like 0.75 kg for those units, with a weight keypad. |
-| Scale barcodes | M | EAN-13 starting with 20–29 that carry a product code and either the weight or the price (format configurable: prefix, code length, weight or price, decimals). Scanning one adds the product with the right quantity. |
-| Open-price item | S | A "misc item" key: type a price and an optional note for something not in the catalog. Permission-gated, shows in reports as its own line. |
-| Price check | S | A mode by the scan bar that shows name, price, stock and pack prices without adding to the cart. |
+| Packs and cartons | M | ✅ |
+| Decimal quantities | S | ✅ |
+| Scale barcodes | M | ✅ |
+| Open-price item | S | ✅ |
+| Price check | S | ✅ |
 
----
+**How it works**
+- **Packs.** `product_units` (name, how many, barcode, price for the whole pack), edited under *Pack sizes* in the product form. Scanning a pack's barcode adds the pack; a cart line can be switched between single and a pack. Stock is still counted in the product's own unit, so a carton of 24 takes 24 off and singles and cartons share the same stock. `sale_items` keeps the pack's name and size as a snapshot (`unit_name`, `unit_factor`); `quantity` stays in the product's unit, so returns, batches and reports work unchanged. Receipts and sales history show "1 × Carton". Receiving stock can be entered in packs (quantity and cost per pack).
+- **Weighed items.** Products sold by kg or liter ask for the amount (weight dialog) when tapped, and the amount can be changed from the cart line; lowering it counts as a void.
+- **Scale labels.** EAN-13 codes that start with the shop's prefix (default `20`), then the product's scale code (PLU, set in the product form for weighed products), then the weight or the price, then a valid check digit. Layout in Settings → Scale labels. Checkout decodes the label again in Rust, so a price label charges exactly what is printed and the screen can't change it. One lookup (`resolve_scan`) handles product barcodes, pack barcodes and scale labels.
+- **Misc item.** Created automatically after setup (`sku` `MISC`, in the shop's language): the price is typed at the till with an optional note ("Misc item: batteries" on the receipt). Any product can be set to *price typed at the till* and/or *don't count stock*. Typing a price needs the new `sales.open_price` permission (given to Manager and Cashier; others need a manager's PIN). Products that don't count stock never block a sale, raise stock alerts or get restocked by returns.
+- **Price check.** A button by the scan bar opens a box that shows price, pack prices, stock, and what a scale label would charge, without touching the cart.
 
 ## 9. Customers and debt ⬜
 

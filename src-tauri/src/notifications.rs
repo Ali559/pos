@@ -39,7 +39,7 @@ async fn conditions(ctx: &Ctx) -> Result<Vec<Condition>> {
 
     let products: Vec<(i64, String, f64, f64)> = sqlx::query_as(
         "SELECT id, name, CAST(stock_quantity AS REAL), CAST(min_stock_level AS REAL)
-         FROM products WHERE is_active = 1 AND (stock_quantity <= 0 OR stock_quantity <= min_stock_level)",
+         FROM products WHERE is_active = 1 AND track_stock = 1 AND (stock_quantity <= 0 OR stock_quantity <= min_stock_level)",
     )
     .fetch_all(&ctx.pool)
     .await?;
@@ -58,7 +58,7 @@ async fn conditions(ctx: &Ctx) -> Result<Vec<Condition>> {
     let batches: Vec<(i64, i64, String, String, f64)> = sqlx::query_as(
         "SELECT b.id, b.product_id, p.name, b.expiry_date, b.quantity_remaining
          FROM product_batches b JOIN products p ON p.id = b.product_id
-         WHERE b.quantity_remaining > 0 AND b.expiry_date IS NOT NULL AND b.expiry_date <= $1",
+         WHERE p.track_stock = 1 AND b.quantity_remaining > 0 AND b.expiry_date IS NOT NULL AND b.expiry_date <= $1",
     )
     .bind(&horizon)
     .fetch_all(&ctx.pool)

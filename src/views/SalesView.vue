@@ -9,10 +9,12 @@ import {
   History,
   Loader2,
   Minus,
+  Package,
   Percent,
   Plus,
   Printer,
   ScanBarcode,
+  ScanSearch,
   Trash2,
   Undo2,
   X,
@@ -24,16 +26,23 @@ import { RouterLink } from "vue-router";
 import CashDialog from "@/components/sales/CashDialog.vue";
 import DiscountDialog from "@/components/sales/DiscountDialog.vue";
 import ManagerPinDialog from "@/components/sales/ManagerPinDialog.vue";
+import WeightDialog from "@/components/sales/WeightDialog.vue";
+import OpenPriceDialog from "@/components/sales/OpenPriceDialog.vue";
+import PriceCheckDialog from "@/components/sales/PriceCheckDialog.vue";
+import { baseQuantity, lineGross, normalizeItem, quantityLabel, type CartItem } from "@/lib/cart";
+import type { ScanResult } from "@/lib/scan";
 import { getSetting } from "@/db/settings";
 import { printReceipt } from "@/lib/print";
 import { useAuth } from "@/stores/auth";
 import {
-  findProductByCode,
+  getProductById,
+  isWeighed,
   listCategories,
   listProducts,
   stockState,
   type Category,
   type Product,
+  type ProductUnit,
 } from "@/db/catalog";
 import { formatCurrency } from "@/lib/format";
 import { categoryInk, categoryTint } from "@/lib/categoryColor";
@@ -43,15 +52,6 @@ import MediaImage from "@/components/media/MediaImage.vue";
 import { useShop } from "@/stores/shop";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
-
-interface CartItem {
-  id: number;
-  name: string;
-  price: number;
-  quantity: number;
-  /** Off this line, as an amount */
-  discount: number;
-}
 
 interface SaleResult {
   id: number;
@@ -72,6 +72,9 @@ const auth = useAuth();
 const pinDialog = ref<InstanceType<typeof ManagerPinDialog> | null>(null);
 const discountDialog = ref<InstanceType<typeof DiscountDialog> | null>(null);
 const cashDialog = ref<InstanceType<typeof CashDialog> | null>(null);
+const weightDialog = ref<InstanceType<typeof WeightDialog> | null>(null);
+const openPriceDialog = ref<InstanceType<typeof OpenPriceDialog> | null>(null);
+const priceCheckOpen = ref(false);
 const autoPrint = ref(false);
 const returns = useReturnCart();
 // Scans go to the items coming back instead of the cart
@@ -93,7 +96,7 @@ const catalogLoaded = ref(false);
 const activeCategory = ref<number | null>(null);
 const activeSub = ref<number | null>(null);
 const payment = ref<"cash" | "card">("cash");
-const lastAdded = ref<number | null>(null);
+const lastAdded = ref<string | null>(null);
 // The last completed sale or refund, shown on the empty receipt until the next scan
 const lastSale = ref<Done | null>(null);
 const charging = ref(false);
@@ -121,17 +124,18 @@ const visibleProducts = computed(() =>
       : products.value,
 );
 
+/** In the product's own unit, over every line (singles + cartons) */
 const qtyInCart = (id: number) =>
-  cartItems.value.find((i) => i.id === id)?.quantity ?? 0;
+  Number(cartItems.value.filter((i) => i.id === id).reduce((n, i) => n + baseQuantity(i), 0).toFixed(3));
 
+// Weighed lines count as one item each
 const itemCount = computed(() =>
-  cartItems.value.reduce((n, i) => n + i.quantity, 0),
+  cartItems.value.reduce((n, i) => n + (i.weighed || i.amount !== null ? 1 : i.quantity), 0),
 );
 // Mirrors the Rust totals (sales::checkout), which are what gets charged
 const roundMoney = (n: number) => (currency.value === "IQD" ? Math.round(n) : Math.round(n * 100) / 100);
-const subtotal = computed(() =>
-  cartItems.value.reduce((sum, i) => sum + i.price * i.quantity, 0),
-);
+const gross = (i: CartItem) => lineGross(i, roundMoney);
+const subtotal = computed(() => cartItems.value.reduce((sum, i) => sum + gross(i), 0));
 const lineDiscounts = computed(() => cartItems.value.reduce((sum, i) => sum + i.discount, 0));
 const discount = computed(() => lineDiscounts.value + cartDiscount.value);
 const tax = computed(() => roundMoney(((subtotal.value - discount.value) * taxRate.value) / 100));
@@ -154,42 +158,158 @@ const addToReturn = (p: Product) => {
   }
 };
 
-const addProduct = (p: Product) => {
+const productOf = (id: number) => products.value.find((p) => p.id === id);
+const unitLabel = (u: string) => t(`catalog.units.${u}`).toLocaleLowerCase();
+
+/** Room left for `p`, in its own unit (Infinity when stock isn't counted) */
+const roomFor = (p: Product, exceptKey?: string) =>
+  p.trackStock ? p.stock - cartItems.value.filter((i) => i.id === p.id && i.key !== exceptKey).reduce((n, i) => n + baseQuantity(i), 0) : Infinity;
+
+const flash = (key: string) => {
+  lastAdded.value = key;
+  setTimeout(() => {
+    if (lastAdded.value === key) lastAdded.value = null;
+  }, 600);
+};
+
+type NewLine = Omit<CartItem, "key"> & { key?: string };
+const plainLine = (p: Product): NewLine => ({
+  id: p.id, name: p.name, price: p.price, quantity: 1, discount: 0,
+  unitId: null, unitName: null, factor: 1, weighed: false,
+  scaleBarcode: null, amount: null, openPrice: null, note: null,
+});
+
+let lineSeq = 0;
+const push = (item: NewLine) => {
+  const line = normalizeItem({ ...item, key: item.key ?? `${item.id}:x${++lineSeq}` });
+  cartItems.value.push(line);
+  flash(line.key);
+};
+
+/** One more of a product (or one of its packs); a new line if needed */
+const addOne = (p: Product, unit: ProductUnit | null = null) => {
+  const factor = unit?.factor ?? 1;
+  if (roomFor(p) < factor - 1e-9) {
+    chargeError.value = t("pos.notEnough", { name: p.name });
+    return;
+  }
+  const key = `${p.id}:${unit?.id ?? ""}`;
+  const existing = cartItems.value.find((i) => i.key === key);
+  if (existing) {
+    existing.quantity++;
+    flash(key);
+  } else {
+    push({ ...plainLine(p), key, price: unit?.price ?? p.price, unitId: unit?.id ?? null, unitName: unit?.name ?? null, factor });
+  }
+};
+
+const addProduct = async (p: Product) => {
   if (returnMode.value) return addToReturn(p);
   if (stockState(p) === "out") return;
   lastSale.value = null;
   chargeError.value = "";
-  const existing = cartItems.value.find((i) => i.id === p.id);
-  if (existing) {
-    if (existing.quantity + 1 > p.stock) return;
-    existing.quantity++;
+  // Something typed at the till: ask its price (and what it was)
+  if (p.openPrice) {
+    const r = await openPriceDialog.value?.ask({ name: p.name });
+    if (r) push({ ...plainLine(p), name: r.note ? `${p.name}: ${r.note}` : p.name, price: r.price, openPrice: r.price, note: r.note || null });
+    return focusScan();
   }
-  else
-    cartItems.value.push({ id: p.id, name: p.name, price: p.price, quantity: 1, discount: 0 });
-  lastAdded.value = p.id;
-  setTimeout(() => {
-    if (lastAdded.value === p.id) lastAdded.value = null;
-  }, 600);
+  // Sold by weight without a scale label: ask how much
+  if (isWeighed(p.unit)) {
+    const qty = await weightDialog.value?.ask({ name: p.name, unit: unitLabel(p.unit), price: p.price, max: roomFor(p) });
+    if (qty) push({ ...plainLine(p), quantity: qty, weighed: true });
+    return focusScan();
+  }
+  addOne(p);
+};
+
+/** A scanned code: a product, one of its packs, or a scale label */
+const addScanned = async (scan: ScanResult) => {
+  const p = productOf(scan.productId) ?? (await getProductById(scan.productId));
+  if (!p) return false;
+  if (returnMode.value) {
+    addToReturn(p);
+    return true;
+  }
+  lastSale.value = null;
+  chargeError.value = "";
+  if (scan.unitId !== null) {
+    const unit = p.units.find((u) => u.id === scan.unitId);
+    if (unit) addOne(p, unit);
+    return true;
+  }
+  if (scan.scaleBarcode) {
+    if (scan.quantity > roomFor(p) + 1e-9) {
+      chargeError.value = t("pos.notEnough", { name: p.name });
+      return true;
+    }
+    push({ ...plainLine(p), quantity: scan.quantity, weighed: true, scaleBarcode: scan.scaleBarcode, amount: scan.amount });
+    return true;
+  }
+  await addProduct(p);
+  return true;
 };
 
 const addItemByBarcode = async () => {
   const code = barcode.value.trim();
   if (!code) return;
-  const product = await findProductByCode(code);
-  if (!product) {
-    notFoundCode.value = code;
+  try {
+    const scan = await call<ScanResult | null>("resolve_scan", { code });
+    if (!scan || !(await addScanned(scan))) {
+      notFoundCode.value = code;
+      return;
+    }
+  } catch (e) {
+    chargeError.value = errorMessage(e);
     return;
   }
   notFoundCode.value = "";
-  addProduct(product);
   barcode.value = "";
 };
 
-const stockOf = (id: number) => products.value.find((p) => p.id === id)?.stock ?? Infinity;
+const incrementQuantity = (key: string) => {
+  const item = cartItems.value.find((i) => i.key === key);
+  const p = item && productOf(item.id);
+  if (!item || !p) return;
+  if (item.weighed) return editWeight(item);
+  if (roomFor(p) >= item.factor - 1e-9) item.quantity++;
+  else chargeError.value = t("pos.notEnough", { name: p.name });
+};
 
-const incrementQuantity = (id: number) => {
-  const item = cartItems.value.find((i) => i.id === id);
-  if (item && item.quantity + 1 <= stockOf(id)) item.quantity++;
+const editWeight = async (item: CartItem) => {
+  const p = productOf(item.id);
+  if (!p || item.scaleBarcode) return;
+  const qty = await weightDialog.value?.ask({ name: p.name, unit: unitLabel(p.unit), price: item.price, current: item.quantity, max: roomFor(p, item.key) });
+  if (!qty) return focusScan();
+  // Less than before takes something off the cart: that's a void
+  if (qty < item.quantity) {
+    return runVoid([{ id: item.id, quantity: item.quantity - qty }], () => {
+      item.quantity = qty;
+      item.discount = Math.min(item.discount, gross(item));
+    });
+  }
+  item.quantity = qty;
+  focusScan();
+};
+
+/** Switches a line between singles and a pack size */
+const switchUnit = (item: CartItem, unitId: string) => {
+  const p = productOf(item.id);
+  if (!p) return;
+  const unit = p.units.find((u) => String(u.id) === unitId) ?? null;
+  const factor = unit?.factor ?? 1;
+  if (roomFor(p, item.key) < item.quantity * factor - 1e-9) {
+    chargeError.value = t("pos.notEnough", { name: p.name });
+    return;
+  }
+  const key = `${p.id}:${unit?.id ?? ""}`;
+  const same = cartItems.value.find((i) => i.key === key && i !== item);
+  if (same) {
+    same.quantity += item.quantity;
+    cartItems.value = cartItems.value.filter((i) => i !== item);
+    return;
+  }
+  Object.assign(item, { key, unitId: unit?.id ?? null, unitName: unit?.name ?? null, factor, price: unit?.price ?? p.price, discount: 0 });
 };
 
 // Taking something back off the cart is a void: it needs sales.void_line
@@ -215,21 +335,22 @@ const runVoid = async (items: { id: number; quantity: number }[], apply: () => v
   focusScan();
 };
 
-const decrementQuantity = (id: number) => {
-  const item = cartItems.value.find((i) => i.id === id);
+const decrementQuantity = (key: string) => {
+  const item = cartItems.value.find((i) => i.key === key);
   if (!item) return;
-  if (item.quantity <= 1) return removeFromCart(id);
-  runVoid([{ id, quantity: 1 }], () => {
+  if (item.weighed) return editWeight(item);
+  if (item.quantity <= 1) return removeFromCart(key);
+  runVoid([{ id: item.id, quantity: item.factor }], () => {
     item.quantity--;
-    item.discount = Math.min(item.discount, item.price * item.quantity);
+    item.discount = Math.min(item.discount, gross(item));
   });
 };
 
-const removeFromCart = (id: number) => {
-  const item = cartItems.value.find((i) => i.id === id);
+const removeFromCart = (key: string) => {
+  const item = cartItems.value.find((i) => i.key === key);
   if (!item) return;
-  runVoid([{ id, quantity: item.quantity }], () => {
-    cartItems.value = cartItems.value.filter((i) => i.id !== id);
+  runVoid([{ id: item.id, quantity: baseQuantity(item) }], () => {
+    cartItems.value = cartItems.value.filter((i) => i.key !== key);
     if (!cartItems.value.length) cartDiscount.value = 0;
   });
 };
@@ -240,7 +361,7 @@ const resetCart = () => {
   focusScan();
 };
 
-const clearCart = () => runVoid(cartItems.value.map((i) => ({ id: i.id, quantity: i.quantity })), resetCart);
+const clearCart = () => runVoid(cartItems.value.map((i) => ({ id: i.id, quantity: baseQuantity(i) })), resetCart);
 
 const stepReturn = (i: number, by: number) => {
   const l = returns.lines.value[i]!;
@@ -259,13 +380,13 @@ const cancelReturn = () => {
 const heldCart = computed<HeldCart>(() => ({ items: cartItems.value, cartDiscount: cartDiscount.value }));
 const resumeHeld = (cart: HeldCart) => {
   lastSale.value = null;
-  cartItems.value = cart.items.map((i) => ({ ...i }));
+  cartItems.value = cart.items.map((i) => normalizeItem({ ...i }));
   cartDiscount.value = cart.cartDiscount;
   focusScan();
 };
 
 const editLineDiscount = async (item: CartItem) => {
-  const n = await discountDialog.value?.ask({ title: item.name, base: item.price * item.quantity, current: item.discount });
+  const n = await discountDialog.value?.ask({ title: item.name, base: gross(item), current: item.discount });
   if (n != null) item.discount = roundMoney(n);
   focusScan();
 };
@@ -307,16 +428,27 @@ const checkout = async () => {
   if (overrideToken === undefined) return focusScan();
   const refundOverrideToken = returns.active.value ? await approve("sales.refund") : null;
   if (refundOverrideToken === undefined) return focusScan();
+  const openPriceOverrideToken = cartItems.value.some((i) => i.openPrice !== null) ? await approve("sales.open_price") : null;
+  if (openPriceOverrideToken === undefined) return focusScan();
   charging.value = true;
   try {
     const sale = await call<SaleResult>("checkout", {
-      lines: cartItems.value.map((i) => ({ productId: i.id, quantity: i.quantity, discount: i.discount })),
+      lines: cartItems.value.map((i) => ({
+        productId: i.id,
+        quantity: i.quantity,
+        discount: i.discount,
+        unitId: i.unitId,
+        scaleBarcode: i.scaleBarcode,
+        openPrice: i.openPrice,
+        note: i.note,
+      })),
       cartDiscount: cartDiscount.value,
       paymentMethod: payment.value,
       tendered,
       overrideToken,
       exchange: returns.active.value ? returns.payload() : null,
       refundOverrideToken,
+      openPriceOverrideToken,
     });
     lastSale.value = { kind: "sale", sale };
     resetCart();
@@ -433,6 +565,14 @@ onMounted(async () => {
           <Undo2 :size="18" />
           {{ $t("returnCart.toggle") }}
         </button>
+        <button
+          type="button"
+          class="flex h-16 shrink-0 items-center gap-2 rounded-xl border-2 border-input bg-card px-4 text-sm font-medium transition-colors hover:border-foreground/30"
+          @click="priceCheckOpen = true"
+        >
+          <ScanSearch :size="18" />
+          {{ $t("priceCheck.button") }}
+        </button>
         </div>
         <p
           v-if="scanError"
@@ -526,16 +666,17 @@ onMounted(async () => {
               ><bdi>{{ p.name }}</bdi></span
             >
             <span class="mt-auto flex items-end justify-between gap-2">
-              <span class="text-lg font-semibold text-foreground">{{
-                formatCurrency(p.price)
-              }}</span>
+              <span v-if="p.openPrice" class="text-sm font-semibold text-foreground">{{ $t("pos.priceAtTill") }}</span>
+              <span v-else class="text-lg font-semibold text-foreground">{{ formatCurrency(p.price) }}<span v-if="isWeighed(p.unit)" class="text-xs font-medium"> / {{ unitLabel(p.unit) }}</span></span>
+              <Package v-if="p.units.length" :size="14" class="mb-1 shrink-0" :aria-label="$t('catalog.packs.title')" />
               <span
                 class="text-xs font-medium"
                 :class="{
                   'text-destructive': stockState(p) !== 'ok',
                 }"
               >
-                <template v-if="stockState(p) === 'out'">{{
+                <template v-if="!p.trackStock"></template>
+                <template v-else-if="stockState(p) === 'out'">{{
                   $t("pos.outOfStock")
                 }}</template>
                 <template v-else>{{
@@ -642,42 +783,64 @@ onMounted(async () => {
           </li>
           <li
             v-for="item in cartItems"
-            :key="item.id"
+            :key="item.key"
             class="group rounded-lg px-3 py-2.5 transition-colors"
-            :class="lastAdded === item.id ? 'bg-sun/25' : 'hover:bg-muted'"
+            :class="lastAdded === item.key ? 'bg-sun/25' : 'hover:bg-muted'"
           >
             <div class="flex items-start gap-3">
               <span class="min-w-0 flex-1 text-[15px] leading-snug font-medium">
                 <bdi>{{ item.name }}</bdi>
               </span>
               <span class="text-end">
-                <span class="num block font-semibold">{{ formatCurrency(item.price * item.quantity - item.discount) }}</span>
+                <span class="num block font-semibold">{{ formatCurrency(gross(item) - item.discount) }}</span>
                 <span v-if="item.discount" class="num block text-xs text-muted-foreground line-through">{{
-                  formatCurrency(item.price * item.quantity)
+                  formatCurrency(gross(item))
                 }}</span>
               </span>
             </div>
             <div class="mt-1.5 flex items-center gap-1">
-              <button
-                type="button"
-                @click="decrementQuantity(item.id)"
-                :aria-label="`−1 ${item.name}`"
-                class="grid size-7 place-items-center rounded-md border bg-card hover:bg-accent"
+              <!-- A scale label's weight is fixed; other lines step or re-weigh -->
+              <template v-if="!item.scaleBarcode">
+                <button
+                  type="button"
+                  @click="decrementQuantity(item.key)"
+                  :aria-label="`−1 ${item.name}`"
+                  class="grid size-7 place-items-center rounded-md border bg-card hover:bg-accent"
+                >
+                  <Minus :size="14" />
+                </button>
+                <button
+                  v-if="item.weighed"
+                  type="button"
+                  class="num min-w-8 rounded-md px-1.5 text-center text-sm font-semibold underline-offset-2 hover:underline"
+                  :aria-label="$t('weigh.change')"
+                  @click="editWeight(item)"
+                >
+                  {{ quantityLabel(item, unitLabel, productOf(item.id)?.unit ?? "kg") }}
+                </button>
+                <span v-else class="num w-8 text-center text-sm font-semibold">{{ item.quantity }}</span>
+                <button
+                  type="button"
+                  @click="incrementQuantity(item.key)"
+                  :aria-label="`+1 ${item.name}`"
+                  class="grid size-7 place-items-center rounded-md border bg-card hover:bg-accent"
+                >
+                  <Plus :size="14" />
+                </button>
+              </template>
+              <span v-else class="num text-sm font-semibold">{{ quantityLabel(item, unitLabel, productOf(item.id)?.unit ?? "kg") }}</span>
+              <!-- Singles or a pack size -->
+              <select
+                v-if="!item.weighed && item.openPrice === null && productOf(item.id)?.units.length"
+                :value="item.unitId ?? ''"
+                class="ms-1 h-7 max-w-28 rounded-md border bg-card px-1 text-xs"
+                :aria-label="$t('catalog.packs.title')"
+                @change="switchUnit(item, ($event.target as HTMLSelectElement).value)"
               >
-                <Minus :size="14" />
-              </button>
-              <span class="num w-8 text-center text-sm font-semibold">{{
-                item.quantity
-              }}</span>
-              <button
-                type="button"
-                @click="incrementQuantity(item.id)"
-                :aria-label="`+1 ${item.name}`"
-                class="grid size-7 place-items-center rounded-md border bg-card hover:bg-accent"
-              >
-                <Plus :size="14" />
-              </button>
-              <span class="num ms-2 text-xs text-muted-foreground"
+                <option value="">{{ $t("catalog.packs.single") }}</option>
+                <option v-for="u in productOf(item.id)!.units" :key="u.id" :value="u.id">{{ u.name }} ({{ u.factor }})</option>
+              </select>
+              <span v-if="item.amount === null" class="num ms-2 text-xs text-muted-foreground"
                 >× {{ formatCurrency(item.price) }}</span
               >
               <button
@@ -691,7 +854,7 @@ onMounted(async () => {
               </button>
               <button
                 type="button"
-                @click="removeFromCart(item.id)"
+                @click="removeFromCart(item.key)"
                 :aria-label="$t('pos.voidLine')"
                 class="grid size-7 place-items-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
               >
@@ -801,6 +964,9 @@ onMounted(async () => {
     <ManagerPinDialog ref="pinDialog" />
     <DiscountDialog ref="discountDialog" />
     <CashDialog ref="cashDialog" />
+    <WeightDialog ref="weightDialog" />
+    <OpenPriceDialog ref="openPriceDialog" />
+    <PriceCheckDialog v-model:open="priceCheckOpen" />
     <OpeningCashDialog v-model:open="openingOpen" :expected="openingExpected" @counted="focusScan()" />
   </div>
 </template>

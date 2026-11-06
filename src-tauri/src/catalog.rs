@@ -236,7 +236,7 @@ pub async fn delete_category(ctx: &Ctx, args: IdArgs) -> Result<()> {
 
 // ---------------------------------------------------------------- products
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProductInput {
     pub name: String,
@@ -259,6 +259,40 @@ pub struct ProductInput {
     pub initial_stock: Option<f64>,
     /// Create only: expiry of the opening stock (YYYY-MM-DD)
     pub initial_expiry: Option<String>,
+    /// Pack sizes (6-pack, carton…); the whole list, replacing what's there
+    #[serde(default)]
+    pub units: Vec<UnitInput>,
+    /// Item code printed inside scale labels (digits)
+    #[serde(default)]
+    pub plu: Option<String>,
+    /// The price is typed at the till (the misc item)
+    #[serde(default)]
+    pub open_price: bool,
+    /// False for things with no stock to count (the misc item, services)
+    #[serde(default = "yes")]
+    pub track_stock: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// One pack size. `id` keeps an existing pack (held carts refer to it).
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnitInput {
+    pub id: Option<i64>,
+    pub name: String,
+    /// How many of the product's own unit are in it (> 1)
+    pub factor: f64,
+    pub barcode: Option<String>,
+    /// For the whole pack
+    pub price: f64,
+}
+
+/// Units sold whole: no 0.75 of a piece, and pack factors are whole too
+pub fn is_whole_unit(unit: &str) -> bool {
+    matches!(unit, "piece" | "pack" | "box")
 }
 
 /// Primary barcode first, then the extras; trimmed, de-duplicated.
@@ -299,11 +333,45 @@ async fn validate_product(ctx: &Ctx, p: &ProductInput, id: Option<i64>) -> Resul
             .await?;
         found.ok_or(Error::NotFound)?;
     }
-    let codes = all_barcodes(p)?;
+    let mut codes = all_barcodes(p)?;
+    let mut seen: HashSet<String> = codes.iter().cloned().collect();
+    for u in &p.units {
+        if u.name.trim().is_empty() {
+            return Err(Error::Rule("unit_name_required"));
+        }
+        if !(u.factor > 1.0) || (is_whole_unit(&p.unit) && u.factor.fract() != 0.0) {
+            return Err(Error::RuleAbout("unit_factor", u.name.trim().to_owned()));
+        }
+        if !(u.price >= 0.0) {
+            return Err(Error::Rule("negative_amount"));
+        }
+        if let Some(code) = trimmed(&u.barcode) {
+            if !seen.insert(code.to_owned()) {
+                return Err(Error::Rule("barcode_duplicate"));
+            }
+        }
+    }
+    if let Some(plu) = trimmed(&p.plu) {
+        if plu.len() > 6 || !plu.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(Error::Rule("plu_format"));
+        }
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM products WHERE plu = $1 AND id IS NOT $2")
+            .bind(crate::scale::normalize_plu(plu))
+            .bind(id)
+            .fetch_one(&ctx.pool)
+            .await?;
+        if n > 0 {
+            return Err(Error::Rule("plu_taken"));
+        }
+    }
+    // Pack barcodes must be free too, but are kept apart from the product's
+    let unit_codes: Vec<String> = p.units.iter().filter_map(|u| trimmed(&u.barcode).map(str::to_owned)).collect();
+    codes.extend(unit_codes.iter().cloned());
     for code in &codes {
         let (n,): (i64,) = sqlx::query_as(
             "SELECT (SELECT COUNT(*) FROM products WHERE barcode = $1 AND id IS NOT $2)
-                  + (SELECT COUNT(*) FROM product_barcodes WHERE barcode = $1 AND product_id IS NOT $2)",
+                  + (SELECT COUNT(*) FROM product_barcodes WHERE barcode = $1 AND product_id IS NOT $2)
+                  + (SELECT COUNT(*) FROM product_units WHERE barcode = $1 AND product_id IS NOT $2)",
         )
         .bind(code)
         .bind(id)
@@ -313,12 +381,67 @@ async fn validate_product(ctx: &Ctx, p: &ProductInput, id: Option<i64>) -> Resul
             return Err(Error::Rule("barcode_taken"));
         }
     }
+    codes.truncate(codes.len() - unit_codes.len());
     Ok(codes)
+}
+
+/// Replaces the product's pack sizes, keeping ids of the ones still there.
+async fn write_units(tx: &mut Transaction<'_, Sqlite>, id: i64, units: &[UnitInput]) -> Result<()> {
+    let keep: Vec<i64> = units.iter().filter_map(|u| u.id).collect();
+    let existing: Vec<(i64,)> = sqlx::query_as("SELECT id FROM product_units WHERE product_id = $1")
+        .bind(id)
+        .fetch_all(&mut **tx)
+        .await?;
+    for (old,) in existing {
+        if !keep.contains(&old) {
+            sqlx::query("DELETE FROM product_units WHERE id = $1").bind(old).execute(&mut **tx).await?;
+        }
+    }
+    // Clear barcodes first so two packs can swap them
+    sqlx::query("UPDATE product_units SET barcode = NULL WHERE product_id = $1").bind(id).execute(&mut **tx).await?;
+    for (pos, u) in units.iter().enumerate() {
+        let updated = match u.id {
+            Some(uid) => sqlx::query(
+                "UPDATE product_units SET name = $1, factor = $2, barcode = $3, price = $4, position = $5
+                 WHERE id = $6 AND product_id = $7",
+            )
+            .bind(u.name.trim())
+            .bind(u.factor)
+            .bind(trimmed(&u.barcode))
+            .bind(u.price)
+            .bind(pos as i64)
+            .bind(uid)
+            .bind(id)
+            .execute(&mut **tx)
+            .await
+            .map_err(map_product_unique)?
+            .rows_affected(),
+            None => 0,
+        };
+        if updated == 0 {
+            sqlx::query("INSERT INTO product_units (product_id, name, factor, barcode, price, position) VALUES ($1, $2, $3, $4, $5, $6)")
+                .bind(id)
+                .bind(u.name.trim())
+                .bind(u.factor)
+                .bind(trimmed(&u.barcode))
+                .bind(u.price)
+                .bind(pos as i64)
+                .execute(&mut **tx)
+                .await
+                .map_err(map_product_unique)?;
+        }
+    }
+    Ok(())
+}
+
+fn plu_of(p: &ProductInput) -> Option<String> {
+    trimmed(&p.plu).map(crate::scale::normalize_plu)
 }
 
 fn map_product_unique(e: sqlx::Error) -> Error {
     match unique_violation(&e) {
         Some(msg) if msg.contains("sku") => Error::Rule("sku_taken"),
+        Some(msg) if msg.contains("plu") => Error::Rule("plu_taken"),
         Some(_) => Error::Rule("barcode_taken"),
         None => e.into(),
     }
@@ -365,8 +488,9 @@ pub async fn create_product(ctx: &Ctx, p: ProductInput) -> Result<i64> {
     let sku = trimmed(&p.sku).map(str::to_owned).unwrap_or_else(|| format!("tmp-{}", uuid::Uuid::new_v4()));
     let id = sqlx::query(
         "INSERT INTO products (sku, name, category_id, barcode, cost_price,
-            selling_price, min_stock_level, unit, icon_key, is_active, stock_quantity)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            selling_price, min_stock_level, unit, icon_key, is_active, stock_quantity,
+            plu, open_price, track_stock)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
     )
     .bind(&sku)
     .bind(p.name.trim())
@@ -379,6 +503,9 @@ pub async fn create_product(ctx: &Ctx, p: ProductInput) -> Result<i64> {
     .bind(trimmed(&p.icon_key))
     .bind(p.is_active)
     .bind(stock)
+    .bind(plu_of(&p))
+    .bind(p.open_price)
+    .bind(p.track_stock)
     .execute(&mut *tx)
     .await
     .map_err(map_product_unique)?
@@ -392,6 +519,7 @@ pub async fn create_product(ctx: &Ctx, p: ProductInput) -> Result<i64> {
             .map_err(map_product_unique)?;
     }
     write_children(&mut tx, id, &codes, &p.media_ids).await?;
+    write_units(&mut tx, id, &p.units).await?;
     if stock > 0.0 {
         sqlx::query(
             "INSERT INTO stock_adjustments (product_id, adjustment_type, quantity, reason, user_id, created_at)
@@ -410,6 +538,32 @@ pub async fn create_product(ctx: &Ctx, p: ProductInput) -> Result<i64> {
     Ok(id)
 }
 
+pub const MISC_SKU: &str = "MISC";
+
+/// The "misc item": an open-price product that doesn't count stock, for
+/// anything not in the catalog. Created once after setup, in the shop's
+/// language; the shop may rename or archive it like any product.
+pub async fn ensure_misc_product(ctx: &Ctx) -> Result<()> {
+    if auth::needs_setup(ctx).await? {
+        return Ok(());
+    }
+    let name = match crate::settings::get(ctx, "language", "ku").await?.as_str() {
+        "ar" => "صنف متنوع",
+        "en" => "Misc item",
+        _ => "کاڵای جۆراوجۆر",
+    };
+    sqlx::query(
+        "INSERT INTO products (sku, name, selling_price, cost_price, unit, icon_key, open_price, track_stock, stock_quantity)
+         SELECT $1, $2, 0, 0, 'piece', 'tabler:dots-circle-horizontal', 1, 0, 0
+         WHERE NOT EXISTS (SELECT 1 FROM products WHERE sku = $1)",
+    )
+    .bind(MISC_SKU)
+    .bind(name)
+    .execute(&ctx.pool)
+    .await?;
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UpdateProductArgs {
     pub id: i64,
@@ -424,8 +578,8 @@ pub async fn update_product(ctx: &Ctx, args: UpdateProductArgs) -> Result<()> {
     let mut q = sqlx::query(
         "UPDATE products SET name = $1, category_id = $2, barcode = $3,
             cost_price = $4, selling_price = $5, min_stock_level = $6, unit = $7, icon_key = $8,
-            is_active = $9, sku = COALESCE($10, sku)
-         WHERE id = $11",
+            is_active = $9, sku = COALESCE($10, sku), plu = $11, open_price = $12, track_stock = $13
+         WHERE id = $14",
     )
     .bind(p.name.trim())
     .bind(p.category_id)
@@ -436,12 +590,13 @@ pub async fn update_product(ctx: &Ctx, args: UpdateProductArgs) -> Result<()> {
     .bind(&p.unit)
     .bind(trimmed(&p.icon_key))
     .bind(p.is_active);
-    q = q.bind(trimmed(&p.sku)).bind(args.id);
+    q = q.bind(trimmed(&p.sku)).bind(plu_of(p)).bind(p.open_price).bind(p.track_stock).bind(args.id);
     let done = q.execute(&mut *tx).await.map_err(map_product_unique)?;
     if done.rows_affected() == 0 {
         return Err(Error::NotFound);
     }
     write_children(&mut tx, args.id, &codes, &p.media_ids).await?;
+    write_units(&mut tx, args.id, &p.units).await?;
     tx.commit().await?;
     audit::log(ctx, Some(actor.user_id), "product.update", "products", Some(args.id), &serde_json::json!({ "name": p.name })).await
 }
@@ -479,6 +634,8 @@ mod tests {
             is_active: true,
             initial_stock: Some(24.0),
             initial_expiry: None,
+            track_stock: true,
+            ..Default::default()
         }
     }
 

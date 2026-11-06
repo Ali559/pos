@@ -12,14 +12,28 @@ use crate::ctx::{now, Ctx};
 use crate::error::{Error, Result};
 use crate::{notifications, returns, shifts, stock};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckoutLine {
     pub product_id: i64,
+    /// In the pack (unit_id) or the product's own unit. Ignored for scale
+    /// labels, which carry their own quantity.
     pub quantity: f64,
     /// Off this line, as an amount
     #[serde(default)]
     pub discount: f64,
+    /// Sold by the pack: a row of product_units
+    #[serde(default)]
+    pub unit_id: Option<i64>,
+    /// A scale label; decoded here again for the weight or price
+    #[serde(default)]
+    pub scale_barcode: Option<String>,
+    /// Price per unit typed at the till (open-price products only)
+    #[serde(default)]
+    pub open_price: Option<f64>,
+    /// What an open-price line is ("batteries"); shown on the receipt
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,6 +56,9 @@ pub struct CheckoutArgs {
     /// Manager approval for the exchange's refund
     #[serde(default)]
     pub refund_override_token: Option<String>,
+    /// Manager approval for typed prices
+    #[serde(default)]
+    pub open_price_override_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -94,10 +111,15 @@ pub fn allocate(amount: f64, weights: &[f64], currency: &str) -> Vec<f64> {
 struct Line {
     product_id: i64,
     name: String,
+    /// In the product's own unit (what stock counts)
     qty: f64,
-    price: f64,
+    /// What the line costs before discounts
+    gross: f64,
     cost: f64,
     discount: f64,
+    /// Sold by the pack: its name and size, as a snapshot
+    unit: Option<(String, f64)>,
+    tracked: bool,
 }
 
 pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
@@ -105,18 +127,13 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     if !matches!(args.payment_method.as_str(), "cash" | "card") {
         return Err(Error::Invalid(format!("unknown payment method {}", args.payment_method)));
     }
-    // Merge repeated lines for the same product
-    let mut wanted: BTreeMap<i64, (f64, f64)> = BTreeMap::new();
+    if args.lines.is_empty() {
+        return Err(Error::Rule("empty_sale"));
+    }
     for line in &args.lines {
-        if !(line.quantity > 0.0) || !(line.discount >= 0.0) {
+        if !(line.quantity > 0.0) || !(line.discount >= 0.0) || line.open_price.is_some_and(|p| !(p >= 0.0)) {
             return Err(Error::Rule("negative_amount"));
         }
-        let e = wanted.entry(line.product_id).or_default();
-        e.0 += line.quantity;
-        e.1 += line.discount;
-    }
-    if wanted.is_empty() {
-        return Err(Error::Rule("empty_sale"));
     }
     if !(args.cart_discount >= 0.0) || args.tendered.is_some_and(|t| !(t >= 0.0)) {
         return Err(Error::Rule("negative_amount"));
@@ -131,44 +148,131 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     let shift_id = shifts::shift_info(ctx, actor.user_id).await?.map(|s| s.id);
     let today = stock::today();
     let block_expired = crate::settings::get(ctx, "block_expired", "0").await? == "1";
+    let scale_cfg = crate::scale::config(ctx).await?;
+
+    // Repeated plain lines (same product, same pack) become one sale line;
+    // scale labels and typed prices stay apart
+    let mut merged: Vec<CheckoutLine> = Vec::new();
+    for line in &args.lines {
+        let plain = line.scale_barcode.is_none() && line.open_price.is_none();
+        match merged.iter_mut().find(|m| {
+            plain && m.scale_barcode.is_none() && m.open_price.is_none() && m.product_id == line.product_id && m.unit_id == line.unit_id
+        }) {
+            Some(m) => {
+                m.quantity += line.quantity;
+                m.discount += line.discount;
+            }
+            None => merged.push(CheckoutLine {
+                product_id: line.product_id,
+                quantity: line.quantity,
+                discount: line.discount,
+                unit_id: line.unit_id,
+                scale_barcode: line.scale_barcode.clone(),
+                open_price: line.open_price,
+                note: line.note.clone(),
+            }),
+        }
+    }
 
     let mut tx = ctx.pool.begin().await?;
     let mut lines = Vec::new();
-    for (&product_id, &(qty, discount)) in &wanted {
-        let row: Option<(String, f64, f64, f64, bool, String)> = sqlx::query_as(
-            "SELECT name, CAST(selling_price AS REAL), CAST(cost_price AS REAL),
-                    CAST(stock_quantity AS REAL), is_active, unit
+    let mut typed_price = false;
+    for line in &merged {
+        let row: Option<(String, f64, f64, bool, String, bool, bool, Option<String>)> = sqlx::query_as(
+            "SELECT name, CAST(selling_price AS REAL), CAST(cost_price AS REAL), is_active, unit,
+                    open_price, track_stock, plu
              FROM products WHERE id = $1",
         )
-        .bind(product_id)
+        .bind(line.product_id)
         .fetch_optional(&mut *tx)
         .await?;
-        let Some((name, price, cost, on_hand, active, unit)) = row else {
+        let Some((name, price, cost, active, unit, open_price, tracked, plu)) = row else {
             return Err(Error::NotFound);
         };
         if !active {
             return Err(Error::RuleAbout("product_unavailable", name));
         }
-        if matches!(unit.as_str(), "piece" | "pack" | "box") && qty.fract() != 0.0 {
+        let whole = crate::catalog::is_whole_unit(&unit);
+        let (qty, gross, pack, name) = if let Some(unit_id) = line.unit_id {
+            let pack: Option<(String, f64, f64)> = sqlx::query_as(
+                "SELECT name, CAST(factor AS REAL), CAST(price AS REAL) FROM product_units WHERE id = $1 AND product_id = $2",
+            )
+            .bind(unit_id)
+            .bind(line.product_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            let Some((pack_name, factor, pack_price)) = pack else {
+                return Err(Error::NotFound);
+            };
+            if line.quantity.fract() != 0.0 {
+                return Err(Error::RuleAbout("quantity_whole", name));
+            }
+            (line.quantity * factor, pack_price * line.quantity, Some((pack_name, factor)), name)
+        } else if let Some(label) = line.scale_barcode.as_deref() {
+            let decoded = scale_cfg.as_ref().and_then(|cfg| crate::scale::decode(cfg, label).map(|d| (cfg, d)));
+            let Some((cfg, (code, value))) = decoded else {
+                return Err(Error::Rule("scale_label_invalid"));
+            };
+            if plu.as_deref() != Some(code.as_str()) {
+                return Err(Error::Rule("scale_label_invalid"));
+            }
+            let (qty, amount) = crate::scale::line_from_label(cfg, value, price);
+            let gross = amount.unwrap_or_else(|| round_money(price * qty, &currency));
+            (qty, gross, None, name)
+        } else if let Some(typed) = line.open_price {
+            if !open_price {
+                return Err(Error::RuleAbout("price_not_open", name));
+            }
+            typed_price = true;
+            let note = line.note.as_deref().map(str::trim).filter(|n| !n.is_empty());
+            let name = note.map(|n| format!("{name}: {n}")).unwrap_or(name);
+            (line.quantity, round_money(typed * line.quantity, &currency), None, name)
+        } else {
+            if open_price {
+                return Err(Error::RuleAbout("price_required", name));
+            }
+            let gross = if whole { price * line.quantity } else { round_money(price * line.quantity, &currency) };
+            (line.quantity, gross, None, name)
+        };
+        if !(qty > 0.0) {
+            return Err(Error::Rule("negative_amount"));
+        }
+        if whole && qty.fract() != 0.0 {
             return Err(Error::RuleAbout("quantity_whole", name));
         }
-        if qty > on_hand {
-            return Err(Error::RuleAbout("insufficient_stock", name));
-        }
-        if block_expired && qty > on_hand - stock::expired_quantity(&mut tx, product_id, &today).await? {
-            return Err(Error::RuleAbout("expired_stock", name));
-        }
-        let discount = round_money(discount, &currency);
-        if discount > price * qty {
+        let discount = round_money(line.discount, &currency);
+        if discount > gross {
             return Err(Error::RuleAbout("discount_too_large", name));
         }
-        lines.push(Line { product_id, name, qty, price, cost, discount });
+        lines.push(Line { product_id: line.product_id, name, qty, gross, cost, discount, unit: pack, tracked });
+    }
+    if typed_price {
+        auth::require_or_override(ctx, &actor, "sales.open_price", args.open_price_override_token.as_deref()).await?;
+    }
+
+    // Stock, per product: a single and a carton of the same thing add up
+    let mut need: BTreeMap<i64, (f64, String)> = BTreeMap::new();
+    for l in lines.iter().filter(|l| l.tracked) {
+        let e = need.entry(l.product_id).or_insert((0.0, l.name.clone()));
+        e.0 += l.qty;
+    }
+    for (&product_id, (qty, name)) in &need {
+        let (on_hand,): (f64,) = sqlx::query_as("SELECT CAST(stock_quantity AS REAL) FROM products WHERE id = $1")
+            .bind(product_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        if *qty > on_hand + 1e-9 {
+            return Err(Error::RuleAbout("insufficient_stock", name.clone()));
+        }
+        if block_expired && *qty > on_hand - stock::expired_quantity(&mut tx, product_id, &today).await? + 1e-9 {
+            return Err(Error::RuleAbout("expired_stock", name.clone()));
+        }
     }
 
     // The cart discount is spread over the lines by what's left of each,
     // so every sale line carries its full discount (reports, returns)
     let cart_discount = round_money(args.cart_discount, &currency);
-    let nets: Vec<f64> = lines.iter().map(|l| l.price * l.qty - l.discount).collect();
+    let nets: Vec<f64> = lines.iter().map(|l| l.gross - l.discount).collect();
     if cart_discount > nets.iter().sum::<f64>() {
         return Err(Error::Rule("discount_too_large"));
     }
@@ -182,7 +286,7 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
         None
     };
 
-    let subtotal = round_money(lines.iter().map(|l| l.price * l.qty).sum(), &currency);
+    let subtotal = round_money(lines.iter().map(|l| l.gross).sum(), &currency);
     let tax = round_money((subtotal - discount) * tax_rate / 100.0, &currency);
     let total = subtotal - discount + tax;
 
@@ -229,22 +333,27 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     for l in &lines {
         // The after_sale_item_insert trigger takes the stock down and logs it
         sqlx::query(
-            "INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, cost_price, tax_rate, discount_amount, subtotal, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, cost_price, tax_rate, discount_amount, subtotal,
+                unit_name, unit_factor, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(id)
         .bind(l.product_id)
         .bind(&l.name)
         .bind(l.qty)
-        .bind(l.price)
+        .bind(l.gross / l.qty)
         .bind(l.cost)
         .bind(tax_rate)
         .bind(l.discount)
-        .bind(l.price * l.qty - l.discount)
+        .bind(l.gross - l.discount)
+        .bind(l.unit.as_ref().map(|u| u.0.as_str()))
+        .bind(l.unit.as_ref().map(|u| u.1))
         .bind(&at)
         .execute(&mut *tx)
         .await?;
-        stock::consume_batches(&mut tx, l.product_id, l.qty, block_expired.then_some(today.as_str())).await?;
+        if l.tracked {
+            stock::consume_batches(&mut tx, l.product_id, l.qty, block_expired.then_some(today.as_str())).await?;
+        }
     }
     if due > 0.0 || exchange.is_none() {
         sqlx::query(
@@ -384,18 +493,21 @@ pub mod tests {
             is_active: true,
             initial_stock: Some(stock),
             initial_expiry: None,
+            track_stock: true,
+            ..Default::default()
         }
     }
 
     pub fn sell(product_id: i64, quantity: f64, method: &str) -> CheckoutArgs {
         CheckoutArgs {
-            lines: vec![CheckoutLine { product_id, quantity, discount: 0.0 }],
+            lines: vec![CheckoutLine { product_id, quantity, discount: 0.0, ..Default::default() }],
             cart_discount: 0.0,
             payment_method: method.into(),
             tendered: None,
             override_token: None,
             exchange: None,
             refund_override_token: None,
+            open_price_override_token: None,
         }
     }
 
@@ -408,6 +520,105 @@ pub mod tests {
             .0
     }
 
+    fn ean13(first12: &str) -> String {
+        let sum: u32 = first12.chars().enumerate().map(|(i, c)| c.to_digit(10).unwrap() * if i % 2 == 0 { 1 } else { 3 }).sum();
+        format!("{first12}{}", (10 - sum % 10) % 10)
+    }
+
+    fn cart(lines: Vec<CheckoutLine>) -> CheckoutArgs {
+        CheckoutArgs { lines, ..sell(0, 1.0, "card") }
+    }
+
+    #[test]
+    fn packs_scale_labels_and_typed_prices() {
+        tauri::async_runtime::block_on(async {
+            let ctx = test_support::ctx().await;
+            setup_owner(&ctx).await;
+
+            // A carton of 24 has its own barcode and price; stock counts cans
+            let mut cola = product("Cola", "111", 30.0);
+            cola.units = vec![crate::catalog::UnitInput { name: "Carton".into(), factor: 24.0, barcode: Some("C24".into()), price: 15000.0, ..Default::default() }];
+            let cola = create_product(&ctx, cola).await.unwrap();
+            let scan = crate::scale::resolve_scan(&ctx, crate::scale::ScanArgs { code: "C24".into() }).await.unwrap().unwrap();
+            assert_eq!((scan.product_id, scan.quantity), (cola, 1.0));
+            let carton = scan.unit_id.unwrap();
+            let sale = checkout(&ctx, cart(vec![
+                CheckoutLine { product_id: cola, quantity: 1.0, unit_id: Some(carton), ..Default::default() },
+                CheckoutLine { product_id: cola, quantity: 2.0, ..Default::default() },
+            ]))
+            .await
+            .unwrap();
+            assert_eq!(sale.total, 15000.0 + 1500.0);
+            assert_eq!(stock_of(&ctx, cola).await, 4.0);
+            let (name, factor, qty, sub): (Option<String>, Option<f64>, f64, f64) = sqlx::query_as(
+                "SELECT unit_name, unit_factor, quantity, subtotal FROM sale_items WHERE sale_id = $1 AND unit_name IS NOT NULL",
+            )
+            .bind(sale.id)
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
+            assert_eq!((name.as_deref(), factor, qty, sub), (Some("Carton"), Some(24.0), 24.0, 15000.0));
+            // Singles and cartons share the stock: 4 cans can't make a carton
+            let r = checkout(&ctx, cart(vec![CheckoutLine { product_id: cola, quantity: 1.0, unit_id: Some(carton), ..Default::default() }])).await;
+            assert!(matches!(r, Err(Error::RuleAbout("insufficient_stock", _))));
+            // A pack's barcode can't be used by another product
+            let r = create_product(&ctx, product("Fake", "C24", 1.0)).await;
+            assert!(matches!(r, Err(Error::Rule("barcode_taken"))));
+
+            // Weighed: a scale label (20 + PLU 00042 + 01250 g) sells 1.25 kg
+            let mut cheese = product("Cheese", "222", 5.0);
+            cheese.unit = "kg".into();
+            cheese.selling_price = 12000.0;
+            cheese.plu = Some("00042".into());
+            let cheese = create_product(&ctx, cheese).await.unwrap();
+            let label = ean13("200004201250");
+            let scan = crate::scale::resolve_scan(&ctx, crate::scale::ScanArgs { code: label.clone() }).await.unwrap().unwrap();
+            assert_eq!((scan.product_id, scan.quantity, scan.amount), (cheese, 1.25, None));
+            let sale = checkout(&ctx, cart(vec![CheckoutLine { product_id: cheese, quantity: 99.0, scale_barcode: Some(label), ..Default::default() }]))
+                .await
+                .unwrap();
+            assert_eq!(sale.total, 15000.0, "the label's weight, not the screen's quantity");
+            assert_eq!(stock_of(&ctx, cheese).await, 3.75);
+            let other = ean13("200004301250");
+            let r = checkout(&ctx, cart(vec![CheckoutLine { product_id: cheese, quantity: 1.0, scale_barcode: Some(other), ..Default::default() }])).await;
+            assert!(matches!(r, Err(Error::Rule("scale_label_invalid"))));
+
+            // Price labels charge exactly the printed price
+            for (k, v) in [("scale_mode", "price"), ("scale_decimals", "0")] {
+                crate::settings::set_setting(&ctx, crate::settings::SetSettingArgs { key: k.into(), value: v.into() }).await.unwrap();
+            }
+            let label = ean13("200004209000");
+            let sale = checkout(&ctx, cart(vec![CheckoutLine { product_id: cheese, quantity: 1.0, scale_barcode: Some(label), ..Default::default() }]))
+                .await
+                .unwrap();
+            assert_eq!(sale.total, 9000.0);
+            assert_eq!(stock_of(&ctx, cheese).await, 3.0);
+
+            // The misc item: price typed at the till, no stock counted
+            crate::catalog::ensure_misc_product(&ctx).await.unwrap();
+            crate::catalog::ensure_misc_product(&ctx).await.unwrap();
+            let (misc,): (i64,) = sqlx::query_as("SELECT id FROM products WHERE sku = 'MISC'").fetch_one(&ctx.pool).await.unwrap();
+            let r = checkout(&ctx, cart(vec![CheckoutLine { product_id: misc, quantity: 1.0, ..Default::default() }])).await;
+            assert!(matches!(r, Err(Error::RuleAbout("price_required", _))));
+            let sale = checkout(&ctx, cart(vec![CheckoutLine {
+                product_id: misc,
+                quantity: 2.0,
+                open_price: Some(2500.0),
+                note: Some("batteries".into()),
+                ..Default::default()
+            }]))
+            .await
+            .unwrap();
+            assert_eq!(sale.total, 5000.0);
+            assert_eq!(stock_of(&ctx, misc).await, 0.0);
+            let (name,): (String,) = sqlx::query_as("SELECT product_name FROM sale_items WHERE sale_id = $1").bind(sale.id).fetch_one(&ctx.pool).await.unwrap();
+            assert!(name.ends_with(": batteries"));
+            // Typed prices only for open-price products
+            let r = checkout(&ctx, cart(vec![CheckoutLine { product_id: cola, quantity: 1.0, open_price: Some(1.0), ..Default::default() }])).await;
+            assert!(matches!(r, Err(Error::RuleAbout("price_not_open", _))));
+        });
+    }
+
     #[test]
     fn checkout_uses_database_prices_and_takes_stock() {
         tauri::async_runtime::block_on(async {
@@ -418,13 +629,14 @@ pub mod tests {
                 .unwrap();
             let id = create_product(&ctx, product("Cola", "1", 10.0)).await.unwrap();
             let sale = checkout(&ctx, CheckoutArgs {
-                lines: vec![CheckoutLine { product_id: id, quantity: 2.0, discount: 0.0 }, CheckoutLine { product_id: id, quantity: 1.0, discount: 0.0 }],
+                lines: vec![CheckoutLine { product_id: id, quantity: 2.0, discount: 0.0, ..Default::default() }, CheckoutLine { product_id: id, quantity: 1.0, discount: 0.0, ..Default::default() }],
                 cart_discount: 0.0,
                 payment_method: "cash".into(),
                 tendered: Some(3000.0),
                 override_token: None,
                 exchange: None,
                 refund_override_token: None,
+                open_price_override_token: None,
             })
             .await
             .unwrap();

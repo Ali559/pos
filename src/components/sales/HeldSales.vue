@@ -8,11 +8,12 @@ import { select } from "@/db/client";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
 import { formatTime } from "@/lib/locale";
+import type { CartItem } from "@/lib/cart";
 
 // Parking a cart to serve the next customer, and picking it back up.
 // The cart is stored as the register keeps it; checkout re-prices it.
 export interface HeldCart {
-  items: { id: number; name: string; price: number; quantity: number; discount: number }[];
+  items: CartItem[];
   cartDiscount: number;
 }
 
@@ -44,7 +45,9 @@ onMounted(load);
 const summary = (r: HeldRow) => {
   try {
     const cart = JSON.parse(r.sale_data) as HeldCart;
-    return cart.items.map((i) => (i.quantity > 1 ? `${i.quantity}× ${i.name}` : i.name)).join("، ");
+    return cart.items
+      .map((i) => (i.unitName ? `${i.quantity}× ${i.unitName} ${i.name}` : i.quantity > 1 ? `${i.quantity}× ${i.name}` : i.name))
+      .join("، ");
   } catch {
     return "";
   }

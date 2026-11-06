@@ -7,7 +7,7 @@ use tauri::AppHandle;
 
 use crate::ctx::Ctx;
 use crate::error::{Error, Result};
-use crate::{auth, backup, catalog, expenses, export, lookup, notifications, printing, query, returns, sales, settings, shifts, staff, stock};
+use crate::{auth, backup, catalog, expenses, export, lookup, notifications, printing, query, returns, sales, scale, settings, shifts, staff, stock};
 
 macro_rules! commands {
     ($( $name:ident $( ($args:ty) )? -> $out:ty => $f:path; )*) => {
@@ -97,6 +97,7 @@ commands! {
 
     authorize_export -> () => export::authorize_export;
     lookup_barcode (lookup::LookupArgs) -> lookup::Lookup => lookup::lookup_barcode;
+    resolve_scan (scale::ScanArgs) -> Option<scale::ScanResult> => scale::resolve_scan;
 
     backup_status -> backup::BackupStatus => backup::backup_status;
     backup_now -> backup::BackupFile => backup::backup_now;

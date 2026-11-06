@@ -65,6 +65,12 @@ pub fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0009_backups.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 10,
+            description: "selling_units",
+            sql: include_str!("../migrations/0010_selling_units.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

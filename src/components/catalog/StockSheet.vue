@@ -25,7 +25,10 @@ const emit = defineEmits<{ saved: [] }>();
 
 const mode = ref<"receive" | "remove">("receive");
 const batches = ref<Batch[]>([]);
-const form = ref({ quantity: "", expiry: "", cost: "", reason: "damaged", batchId: "fifo", note: "" });
+const form = ref({ quantity: "", expiry: "", cost: "", reason: "damaged", batchId: "fifo", note: "", unitId: "" });
+// Received by the carton: quantity and cost are per carton, stock counts singles
+const pack = computed(() => props.product?.units.find((u) => String(u.id) === form.value.unitId) ?? null);
+const factor = computed(() => (mode.value === "receive" ? pack.value?.factor ?? 1 : 1));
 const saving = ref(false);
 const error = ref("");
 
@@ -39,7 +42,7 @@ watch(open, async (isOpen) => {
   if (!isOpen || !props.product) return;
   mode.value = "receive";
   error.value = "";
-  form.value = { quantity: "", expiry: "", cost: "", reason: "damaged", batchId: "fifo", note: "" };
+  form.value = { quantity: "", expiry: "", cost: "", reason: "damaged", batchId: "fifo", note: "", unitId: "" };
   batches.value = await listBatches(props.product.id);
 });
 
@@ -54,9 +57,9 @@ const save = async () => {
     if (mode.value === "receive") {
       await call("receive_stock", {
         productId: props.product.id,
-        quantity: Number(f.quantity),
+        quantity: Number(f.quantity) * factor.value,
         expiryDate: f.expiry || null,
-        costPrice: f.cost === "" ? null : Number(f.cost),
+        costPrice: f.cost === "" ? null : Number(f.cost) / factor.value,
         note: f.note || null,
       });
     } else {
@@ -101,7 +104,21 @@ const save = async () => {
 
     <div class="space-y-2">
       <Label for="s-qty">{{ $t("stock.quantity") }}</Label>
-      <Input id="s-qty" v-model="form.quantity" type="number" min="0" step="any" required dir="ltr" />
+      <div class="flex gap-2">
+        <Input id="s-qty" v-model="form.quantity" type="number" min="0" step="any" required dir="ltr" />
+        <select
+          v-if="mode === 'receive' && product?.units.length"
+          v-model="form.unitId"
+          class="h-10 rounded-md border bg-card px-2 text-sm"
+          :aria-label="$t('catalog.packs.title')"
+        >
+          <option value="">{{ $t("catalog.packs.single") }}</option>
+          <option v-for="u in product.units" :key="u.id" :value="String(u.id)">{{ u.name }} ({{ u.factor }})</option>
+        </select>
+      </div>
+      <p v-if="pack && Number(form.quantity) > 0" class="text-xs text-muted-foreground">
+        {{ $t("stock.packTotal", { n: Number(form.quantity) * pack.factor }) }}
+      </p>
     </div>
 
     <template v-if="mode === 'receive'">
@@ -121,7 +138,7 @@ const save = async () => {
           <Input id="s-cost" v-model="form.cost" type="number" min="0" step="any" dir="ltr" />
         </div>
       </div>
-      <p class="-mt-2 text-xs text-muted-foreground">{{ $t("stock.costHint") }}</p>
+      <p class="-mt-2 text-xs text-muted-foreground">{{ pack ? $t("stock.costPerPack", { pack: pack.name }) : $t("stock.costHint") }}</p>
     </template>
 
     <template v-else>

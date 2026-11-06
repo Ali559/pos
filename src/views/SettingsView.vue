@@ -118,6 +118,33 @@ const saveRegister = async () => {
   }
 };
 
+// Scale labels: prefix + item code + weight or price + check digit
+const scale = ref({ prefix: "20", codeLength: "5", mode: "weight", decimals: "3" });
+const scaleSaved = ref(false);
+const scaleError = ref("");
+const scaleExample = computed(() => {
+  const p = scale.value.prefix.trim();
+  const code = Number(scale.value.codeLength) || 0;
+  const rest = 12 - p.length - code;
+  if (!p || rest < 4) return "";
+  return `${p} ${"C".repeat(code)} ${"V".repeat(rest)} ✓`;
+});
+const saveScale = async () => {
+  scaleError.value = "";
+  try {
+    const sc = scale.value;
+    // Off first, so the layout is never checked half-changed
+    await setSetting("scale_prefix", "");
+    await setSetting("scale_code_length", sc.codeLength);
+    await setSetting("scale_mode", sc.mode);
+    await setSetting("scale_decimals", sc.decimals);
+    await setSetting("scale_prefix", sc.prefix.trim());
+    flash(scaleSaved);
+  } catch (e) {
+    scaleError.value = errorMessage(e);
+  }
+};
+
 // Shop profile
 const shopForm = ref<ShopProfile | null>(null);
 const shopLogo = ref<MediaFile | null>(null);
@@ -183,6 +210,8 @@ onMounted(async () => {
     printerMode.value = "network";
     networkPrinter.value = printer.slice(4);
   }
+  const [sp, sl, sm, sd] = await Promise.all(["scale_prefix", "scale_code_length", "scale_mode", "scale_decimals"].map(getSetting));
+  scale.value = { prefix: sp ?? "20", codeLength: sl ?? "5", mode: sm === "price" ? "price" : "weight", decimals: sd ?? "3" };
   if (canSystem.value) printers.value = await call<typeof printers.value>("list_printers").catch(() => []);
 });
 </script>
@@ -326,6 +355,50 @@ onMounted(async () => {
                 <Button type="submit">{{ $t("common.save") }}</Button>
                 <span v-if="registerSaved" class="text-sm text-success">{{ $t("common.saved") }}</span>
                 <span v-if="registerError" role="alert" class="text-sm text-destructive">{{ registerError }}</span>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card v-if="canSystem">
+          <CardHeader>
+            <CardTitle>{{ $t("settings.scale.title") }}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form class="space-y-4" @submit.prevent="saveScale">
+              <p class="text-sm text-muted-foreground">{{ $t("settings.scale.hint") }}</p>
+              <div class="flex flex-wrap gap-4">
+                <div class="space-y-2">
+                  <Label for="scalePrefix">{{ $t("settings.scale.prefix") }}</Label>
+                  <Input id="scalePrefix" v-model="scale.prefix" dir="ltr" inputmode="numeric" maxlength="3" class="w-24" />
+                </div>
+                <div class="space-y-2">
+                  <Label for="scaleCode">{{ $t("settings.scale.codeLength") }}</Label>
+                  <Input id="scaleCode" v-model="scale.codeLength" type="number" min="3" max="6" dir="ltr" class="w-24" />
+                </div>
+                <div class="space-y-2">
+                  <Label>{{ $t("settings.scale.mode") }}</Label>
+                  <Select v-model="scale.mode" :key="$i18n.locale">
+                    <SelectTrigger class="w-44"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="weight">{{ $t("settings.scale.modeWeight") }}</SelectItem>
+                      <SelectItem value="price">{{ $t("settings.scale.modePrice") }}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div class="space-y-2">
+                  <Label for="scaleDec">{{ $t("settings.scale.decimals") }}</Label>
+                  <Input id="scaleDec" v-model="scale.decimals" type="number" min="0" max="3" dir="ltr" class="w-24" />
+                </div>
+              </div>
+              <p class="text-xs text-muted-foreground">
+                {{ scale.prefix.trim() ? $t("settings.scale.decimalsHint") : $t("settings.scale.off") }}
+                <span v-if="scaleExample" dir="ltr" class="num ms-1 rounded bg-muted px-1.5 py-0.5 font-mono">{{ scaleExample }}</span>
+              </p>
+              <div class="flex items-center gap-3">
+                <Button type="submit">{{ $t("common.save") }}</Button>
+                <span v-if="scaleSaved" class="text-sm text-success">{{ $t("common.saved") }}</span>
+                <span v-if="scaleError" role="alert" class="text-sm text-destructive">{{ scaleError }}</span>
               </div>
             </form>
           </CardContent>

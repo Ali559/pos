@@ -18,6 +18,7 @@ mod printing;
 mod query;
 mod returns;
 mod sales;
+mod scale;
 mod seeds;
 mod settings;
 mod shifts;
@@ -114,6 +115,7 @@ pub fn run() {
             commands::delete_expense,
             commands::authorize_export,
             commands::lookup_barcode,
+            commands::resolve_scan,
             commands::backup_status,
             commands::backup_now,
             commands::seed_demo_data,

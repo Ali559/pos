@@ -56,6 +56,33 @@ pub async fn set_setting(ctx: &Ctx, args: SetSettingArgs) -> Result<()> {
             flag(v)?;
             Some(actor)
         }
+        // Scale label layout (see scale.rs); a blank prefix switches it off
+        "scale_prefix" | "scale_code_length" => {
+            let actor = auth::require(ctx, "settings.system").await?;
+            let (prefix, len) = if args.key == "scale_prefix" {
+                (v.trim().to_owned(), get(ctx, "scale_code_length", "5").await?.parse().unwrap_or(5))
+            } else {
+                (get(ctx, "scale_prefix", "20").await?, v.parse().unwrap_or(0))
+            };
+            if !(prefix.is_empty() && args.key == "scale_prefix") && !crate::scale::layout_ok(&prefix, len) {
+                return Err(Error::Rule("scale_layout"));
+            }
+            Some(actor)
+        }
+        "scale_mode" => {
+            let actor = auth::require(ctx, "settings.system").await?;
+            if !matches!(v, "weight" | "price") {
+                return Err(Error::Invalid("scale_mode must be weight or price".into()));
+            }
+            Some(actor)
+        }
+        "scale_decimals" => {
+            let actor = auth::require(ctx, "settings.system").await?;
+            if !matches!(v, "0" | "1" | "2" | "3") {
+                return Err(Error::Invalid("scale_decimals must be 0–3".into()));
+            }
+            Some(actor)
+        }
         // How many daily backups to keep
         "backup_keep" => {
             let actor = auth::require(ctx, "settings.system").await?;

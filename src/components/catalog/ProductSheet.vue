@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import DateInput from "@/components/pickers/DateInput.vue";
 import { computed, nextTick, ref, watch } from "vue";
-import { Loader2, Plus, ScanBarcode, X } from "lucide-vue-next";
+import { Loader2, Package, Plus, ScanBarcode, X } from "lucide-vue-next";
 import { useI18n } from "vue-i18n";
 import { guessCategory, lookupBarcode } from "@/lib/barcodeLookup";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ import {
 import EditSheet from "@/components/EditSheet.vue";
 import IconPicker from "@/components/icons/IconPicker.vue";
 import MediaGallery from "@/components/media/MediaGallery.vue";
-import { getProduct, type Category } from "@/db/catalog";
+import { getProduct, isWeighed, type Category } from "@/db/catalog";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
 import { formatCurrency } from "@/lib/format";
@@ -43,7 +43,19 @@ const blank = () => ({
   barcode: "", extraBarcodes: [] as string[], costPrice: "", sellingPrice: "",
   minStock: "0", unit: "piece" as string, iconKey: null as string | null,
   isActive: true, initialStock: "0", initialExpiry: "", stock: 0,
+  units: [] as PackDraft[], plu: "", openPrice: false, trackStock: true,
 });
+
+/** A pack size being edited; id is kept for existing packs */
+interface PackDraft { id: number | null; name: string; factor: string; barcode: string; price: string }
+const addPack = () =>
+  form.value.units.push({ id: null, name: form.value.units.length ? "" : t("catalog.packs.carton"), factor: "", barcode: "", price: "" });
+/** Per-item price inside a pack, to compare with the single price */
+const perItem = (u: PackDraft) => {
+  const f = Number(u.factor);
+  const pr = Number(u.price);
+  return f > 1 && u.price !== "" ? pr / f : null;
+};
 
 const form = ref(blank());
 const images = ref<MediaFile[]>([]);
@@ -88,6 +100,10 @@ const load = async () => {
     initialStock: "0",
     initialExpiry: "",
     stock: p.stock_quantity,
+    units: p.units.map((u) => ({ id: u.id, name: u.name, factor: String(u.factor), barcode: u.barcode ?? "", price: String(u.price) })),
+    plu: p.plu ?? "",
+    openPrice: !!p.open_price,
+    trackStock: !!p.track_stock,
   };
   images.value = p.media;
 };
@@ -163,6 +179,12 @@ const save = async () => {
     isActive: f.isActive,
     initialStock: props.productId === null ? Number(f.initialStock) || 0 : null,
     initialExpiry: props.productId === null && f.initialExpiry ? f.initialExpiry : null,
+    units: f.units
+      .filter((u) => u.name.trim() || u.factor || u.price)
+      .map((u) => ({ id: u.id, name: u.name, factor: Number(u.factor) || 0, barcode: u.barcode.trim() || null, price: Number(u.price) || 0 })),
+    plu: isWeighed(f.unit) ? f.plu.trim() || null : null,
+    openPrice: f.openPrice,
+    trackStock: f.trackStock,
   };
   saving.value = true;
   error.value = "";
@@ -279,6 +301,44 @@ const save = async () => {
         </div>
       </div>
 
+      <div v-if="isWeighed(form.unit)" class="space-y-2">
+        <Label for="p-plu">{{ $t("catalog.plu") }}</Label>
+        <Input id="p-plu" v-model="form.plu" dir="ltr" inputmode="numeric" maxlength="6" class="w-40" />
+        <p class="text-xs text-muted-foreground">{{ $t("catalog.pluHint") }}</p>
+      </div>
+
+      <!-- Pack sizes: the same product sold as a 6-pack or a carton -->
+      <fieldset class="space-y-3">
+        <legend class="mb-1 flex items-center gap-2 text-sm font-medium"><Package :size="16" />{{ $t("catalog.packs.title") }}</legend>
+        <p class="text-xs text-muted-foreground">{{ $t("catalog.packs.hint", { unit: $t(`catalog.units.${form.unit}`).toLocaleLowerCase() }) }}</p>
+        <div v-for="(u, i) in form.units" :key="u.id ?? `new${i}`" class="space-y-2 rounded-lg border p-3">
+          <div class="flex gap-2">
+            <Input v-model="u.name" dir="auto" required :placeholder="$t('catalog.packs.name')" :aria-label="$t('catalog.packs.name')" />
+            <Button type="button" variant="ghost" size="icon" :aria-label="$t('common.remove')" @click="form.units.splice(i, 1)"><X /></Button>
+          </div>
+          <div class="grid grid-cols-3 gap-2">
+            <div class="space-y-1">
+              <Label class="text-xs">{{ $t("catalog.packs.factor", { unit: $t(`catalog.units.${form.unit}`) }) }}</Label>
+              <Input v-model="u.factor" type="number" min="2" step="any" required dir="ltr" />
+            </div>
+            <div class="space-y-1">
+              <Label class="text-xs">{{ $t("catalog.packs.price") }}</Label>
+              <Input v-model="u.price" type="number" min="0" step="any" required dir="ltr" />
+            </div>
+            <div class="space-y-1">
+              <Label class="text-xs">{{ $t("inventory.table.barcode") }}</Label>
+              <Input v-model="u.barcode" dir="ltr" inputmode="numeric" />
+            </div>
+          </div>
+          <p v-if="perItem(u) !== null" class="text-xs text-muted-foreground">
+            {{ $t("catalog.packs.perItem", { price: formatCurrency(perItem(u)!) }) }}
+          </p>
+        </div>
+        <Button type="button" variant="ghost" size="sm" @click="addPack">
+          <Plus /> {{ $t("catalog.packs.add") }}
+        </Button>
+      </fieldset>
+
       <fieldset class="space-y-2">
         <legend class="mb-2 text-sm font-medium">{{ $t("catalog.extraBarcodes") }}</legend>
         <div v-for="(_, i) in form.extraBarcodes" :key="i" class="flex gap-2">
@@ -327,6 +387,20 @@ const save = async () => {
         <span>
           <span class="font-medium">{{ $t("catalog.forSale") }}</span>
           <span class="block text-muted-foreground">{{ $t("catalog.forSaleHint") }}</span>
+        </span>
+      </label>
+      <label class="flex items-center gap-3 text-sm">
+        <input v-model="form.openPrice" type="checkbox" class="size-4 accent-primary" />
+        <span>
+          <span class="font-medium">{{ $t("catalog.openPrice") }}</span>
+          <span class="block text-muted-foreground">{{ $t("catalog.openPriceHint") }}</span>
+        </span>
+      </label>
+      <label class="flex items-center gap-3 text-sm">
+        <input v-model="form.trackStock" type="checkbox" class="size-4 accent-primary" />
+        <span>
+          <span class="font-medium">{{ $t("catalog.trackStock") }}</span>
+          <span class="block text-muted-foreground">{{ $t("catalog.trackStockHint") }}</span>
         </span>
       </label>
     </template>

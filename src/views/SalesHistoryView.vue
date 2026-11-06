@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import RangePicker, { resolveRange, type RangeModel } from "@/components/reports/RangePicker.vue";
 import ReturnDialog from "@/components/sales/ReturnDialog.vue";
-import { getSale, listSales, type SaleDetail, type SaleRow, type SaleStatus } from "@/db/sales";
+import { getSale, lineSold, listSales, type SaleDetail, type SaleRow, type SaleStatus } from "@/db/sales";
 import { errorMessage } from "@/lib/errors";
 import { formatCurrency } from "@/lib/format";
 import { formatDateTime, formatTime } from "@/lib/locale";
@@ -158,11 +158,11 @@ const reprint = (id: number) => printReceipt(id, { copy: true }).catch((e) => (e
               <tr v-for="l in selected.lines" :key="l.id">
                 <td class="px-4 py-2.5">
                   <bdi class="font-medium">{{ l.name }}</bdi>
-                  <span class="num block text-xs text-muted-foreground">× {{ formatCurrency(l.unit_price) }}</span>
+                  <span class="num block text-xs text-muted-foreground"><bdi v-if="l.unit_name">{{ l.unit_name }} </bdi>× {{ formatCurrency(lineSold(l).each) }}</span>
                   <span v-if="l.discount" class="num block text-xs text-primary">−{{ formatCurrency(l.discount) }}</span>
                 </td>
                 <td class="num px-4 py-2.5 text-end">
-                  {{ qty(l.quantity) }}
+                  <bdi>{{ lineSold(l).label }}</bdi>
                   <span v-if="l.returned" class="block text-xs text-destructive">{{ $t("history.returned", { n: qty(l.returned) }) }}</span>
                 </td>
                 <td class="num px-4 py-2.5 text-end font-semibold">{{ formatCurrency(l.subtotal) }}</td>

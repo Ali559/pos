@@ -203,9 +203,10 @@ const onCategoriesChanged = () => {
                 </TableCell>
                 <TableCell class="num text-muted-foreground" dir="ltr">{{ p.sku }}</TableCell>
                 <TableCell class="num text-muted-foreground" dir="ltr">{{ p.barcode ?? "—" }}</TableCell>
-                <TableCell class="num text-end font-medium">{{ formatCurrency(p.price) }}</TableCell>
+                <TableCell class="num text-end font-medium">{{ p.openPrice ? "—" : formatCurrency(p.price) }}</TableCell>
                 <TableCell>
-                  <div class="flex items-center gap-3">
+                  <span v-if="!p.trackStock" class="text-sm text-muted-foreground">{{ $t("inventory.notCounted") }}</span>
+                  <div v-else class="flex items-center gap-3">
                     <span class="num w-8 text-end font-medium">{{ p.stock }}</span>
                     <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
                       <div
@@ -221,6 +222,7 @@ const onCategoriesChanged = () => {
                 </TableCell>
                 <TableCell>
                   <span
+                    v-if="p.trackStock"
                     class="inline-flex h-6 items-center rounded-md px-2 text-xs font-semibold"
                     :class="statusClass[stockState(p)]"
                   >
@@ -230,7 +232,7 @@ const onCategoriesChanged = () => {
                 <TableCell class="pe-5">
                   <div class="flex justify-end gap-0.5">
                     <Button
-                      v-if="canAdjust"
+                      v-if="canAdjust && p.trackStock"
                       variant="ghost"
                       size="icon-sm"
                       :aria-label="$t('stock.title')"

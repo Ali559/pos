@@ -49,7 +49,18 @@ export interface SaleLine {
   tax_rate: number;
   returned: number;
   unit: string;
+  /** Sold by the pack: its name and size (quantity is still in the product's unit) */
+  unit_name: string | null;
+  unit_factor: number | null;
 }
+
+/** "Carton × 2" for a pack line, or the quantity; and the price of one of those */
+export const lineSold = (l: Pick<SaleLine, "quantity" | "unit_price" | "unit_name" | "unit_factor">) => {
+  const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).replace(/0+$/, ""));
+  return l.unit_name && l.unit_factor
+    ? { label: `${fmt(l.quantity / l.unit_factor)} × ${l.unit_name}`, each: l.unit_price * l.unit_factor }
+    : { label: fmt(l.quantity), each: l.unit_price };
+};
 
 export interface SaleDetail {
   id: number;
@@ -94,7 +105,7 @@ export const getSale = async (id: number): Promise<SaleDetail | null> => {
     select<SaleLine>(
       `SELECT si.id, si.product_id, si.product_name AS name, si.quantity, si.unit_price,
               COALESCE(si.discount_amount, 0) AS discount, si.subtotal, COALESCE(si.tax_rate, 0) AS tax_rate,
-              COALESCE(p.unit, 'piece') AS unit,
+              COALESCE(p.unit, 'piece') AS unit, si.unit_name, si.unit_factor,
               (SELECT COALESCE(SUM(quantity), 0) FROM return_items WHERE sale_item_id = si.id) AS returned
        FROM sale_items si LEFT JOIN products p ON p.id = si.product_id
        WHERE si.sale_id = $1 ORDER BY si.id`,

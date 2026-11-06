@@ -17,6 +17,21 @@ export interface Category {
   image: MediaFile | null;
 }
 
+/** A pack size: a 6-pack, a carton. Price is for the whole pack. */
+export interface ProductUnit {
+  id: number;
+  productId: number;
+  name: string;
+  /** How many of the product's own unit */
+  factor: number;
+  barcode: string | null;
+  price: number;
+}
+
+/** Units that are counted, not weighed or measured */
+export const WHOLE_UNITS = ["piece", "pack", "box"];
+export const isWeighed = (unit: string) => !WHOLE_UNITS.includes(unit);
+
 export interface Product {
   id: number;
   sku: string;
@@ -34,13 +49,19 @@ export interface Product {
   categoryName: string | null;
   categoryColor: string | null;
   categoryIcon: string | null;
+  /** The price is typed at the till (the misc item) */
+  openPrice: number;
+  trackStock: number;
+  plu: string | null;
   cover: MediaFile | null;
+  /** Pack sizes, filled by listProducts / findProductByCode */
+  units: ProductUnit[];
 }
 
 export type StockState = "ok" | "low" | "out";
 
-export const stockState = (p: Pick<Product, "stock" | "minStock">): StockState =>
-  p.stock <= 0 ? "out" : p.stock <= p.minStock ? "low" : "ok";
+export const stockState = (p: Pick<Product, "stock" | "minStock"> & { trackStock?: number }): StockState =>
+  p.trackStock === 0 ? "ok" : p.stock <= 0 ? "out" : p.stock <= p.minStock ? "low" : "ok";
 
 export const listCategories = async (includeArchived = false): Promise<Category[]> => {
   const rows = await select<Omit<Category, "image"> & MediaColumns>(
@@ -71,6 +92,7 @@ const PRODUCT_COLUMNS = `
   c.name AS categoryName,
   COALESCE(c.color, pc.color) AS categoryColor,
   c.icon_key AS categoryIcon,
+  p.open_price AS openPrice, p.track_stock AS trackStock, p.plu,
   m.id AS m_id, m.uuid AS m_uuid, m.path AS m_path, m.mime AS m_mime,
   m.width AS m_width, m.height AS m_height, m.bytes AS m_bytes, m.blurhash AS m_blurhash`;
 
@@ -81,13 +103,14 @@ const PRODUCT_FROM = `
   LEFT JOIN product_media pm ON pm.product_id = p.id AND pm.position = 0
   LEFT JOIN media_files m ON m.id = pm.media_id`;
 
-type ProductRow = Omit<Product, "cover"> & {
+type ProductRow = Omit<Product, "cover" | "units"> & {
   m_id: number | null; m_uuid: string; m_path: string; m_mime: string;
   m_width: number; m_height: number; m_bytes: number; m_blurhash: string;
 };
 
 const toProduct = ({ m_id, m_uuid, m_path, m_mime, m_width, m_height, m_bytes, m_blurhash, ...p }: ProductRow): Product => ({
   ...p,
+  units: [],
   cover: m_id
     ? { id: m_id, uuid: m_uuid, path: m_path, mime: m_mime, width: m_width, height: m_height, bytes: m_bytes, blurhash: m_blurhash }
     : null,
@@ -131,7 +154,23 @@ export const listProducts = async (query: ProductQuery = {}) => {
      ORDER BY COALESCE(pc.display_order, c.display_order), c.display_order, p.name${page}`,
     params,
   );
-  return rows.map(toProduct);
+  return withUnits(rows.map(toProduct));
+};
+
+const UNIT_COLUMNS = "id, product_id AS productId, name, factor, barcode, price";
+
+/** Attaches pack sizes to a list of products */
+const withUnits = async (products: Product[]) => {
+  if (!products.length) return products;
+  const units = await select<ProductUnit>(`SELECT ${UNIT_COLUMNS} FROM product_units ORDER BY product_id, position, id`);
+  const byProduct = new Map<number, ProductUnit[]>();
+  for (const u of units) byProduct.set(u.productId, [...(byProduct.get(u.productId) ?? []), u]);
+  return products.map((p) => ({ ...p, units: byProduct.get(p.id) ?? [] }));
+};
+
+export const getProductById = async (id: number) => {
+  const row = await selectOne<ProductRow>(`SELECT ${PRODUCT_COLUMNS} ${PRODUCT_FROM} WHERE p.id = $1`, [id]);
+  return row ? (await withUnits([toProduct(row)]))[0]! : null;
 };
 
 export const countProducts = async (query: ProductQuery = {}) => {
@@ -154,7 +193,7 @@ export const findProductByCode = async (code: string) => {
      LIMIT 1`,
     [code],
   );
-  return row ? toProduct(row) : null;
+  return row ? (await withUnits([toProduct(row)]))[0]! : null;
 };
 
 /** Everything the product editor needs. */
@@ -171,19 +210,23 @@ export interface ProductDetail {
   icon_key: string | null;
   is_active: number;
   stock_quantity: number;
+  plu: string | null;
+  open_price: number;
+  track_stock: number;
   extraBarcodes: string[];
   media: MediaFile[];
+  units: ProductUnit[];
 }
 
 export const getProduct = async (id: number): Promise<ProductDetail | null> => {
-  const p = await selectOne<Omit<ProductDetail, "extraBarcodes" | "media">>(
+  const p = await selectOne<Omit<ProductDetail, "extraBarcodes" | "media" | "units">>(
     `SELECT id, sku, name, category_id, barcode, cost_price, selling_price,
-            min_stock_level, unit, icon_key, is_active, stock_quantity
+            min_stock_level, unit, icon_key, is_active, stock_quantity, plu, open_price, track_stock
      FROM products WHERE id = $1`,
     [id],
   );
   if (!p) return null;
-  const [codes, media] = await Promise.all([
+  const [codes, media, units] = await Promise.all([
     select<{ barcode: string }>(
       "SELECT barcode FROM product_barcodes WHERE product_id = $1 ORDER BY id",
       [id],
@@ -194,6 +237,7 @@ export const getProduct = async (id: number): Promise<ProductDetail | null> => {
        WHERE pm.product_id = $1 ORDER BY pm.position`,
       [id],
     ),
+    select<ProductUnit>(`SELECT ${UNIT_COLUMNS} FROM product_units WHERE product_id = $1 ORDER BY position, id`, [id]),
   ]);
-  return { ...p, extraBarcodes: codes.map((c) => c.barcode), media };
+  return { ...p, extraBarcodes: codes.map((c) => c.barcode), media, units };
 };

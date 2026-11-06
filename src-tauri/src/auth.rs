@@ -475,6 +475,7 @@ pub async fn complete_setup(ctx: &Ctx, args: SetupArgs) -> Result<AuthStatus> {
         .await?;
     crate::seeds::localize_defaults(&ctx.pool, &args.language).await?;
     insert_starter_categories(ctx, &args.categories).await?;
+    crate::catalog::ensure_misc_product(ctx).await?;
     let id = sqlx::query(
         "INSERT INTO users (username, password_hash, pin_hash, full_name, role_id)
          VALUES ($1, $2, $3, $4, $5)",
