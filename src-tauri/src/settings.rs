@@ -51,10 +51,18 @@ pub async fn set_setting(ctx: &Ctx, args: SetSettingArgs) -> Result<()> {
                 _ => return Err(Error::Invalid("expiry_warn_days must be 0–90".into())),
             }
         }
-        "os_notifications" | "barcode_lookup" | "auto_print" | "block_expired" => {
+        "os_notifications" | "barcode_lookup" | "auto_print" | "block_expired" | "backup_auto" => {
             let actor = auth::require(ctx, "settings.system").await?;
             flag(v)?;
             Some(actor)
+        }
+        // How many daily backups to keep
+        "backup_keep" => {
+            let actor = auth::require(ctx, "settings.system").await?;
+            match v.parse::<u32>() {
+                Ok(n) if (1..=365).contains(&n) => Some(actor),
+                _ => return Err(Error::Invalid("backup_keep must be 1–365".into())),
+            }
         }
         "receipt_width" => {
             let actor = auth::require(ctx, "settings.system").await?;

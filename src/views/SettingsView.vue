@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import ShopForm from "@/components/shop/ShopForm.vue";
+import BackupsTab from "@/components/backup/BackupsTab.vue";
 import { useTheme } from "@/hooks/useTheme";
 import { useShop } from "@/stores/shop";
 import { useAuth } from "@/stores/auth";
@@ -32,7 +34,9 @@ const auth = useAuth();
 // The theme is per device, so anyone may change it; the rest is gated
 const canSystem = computed(() => auth.can("settings.system"));
 const canShop = computed(() => auth.can("settings.shop"));
-const activeTab = ref("general");
+// ?tab=backups opens a tab directly (e.g. from a backup alert)
+const route = useRoute();
+const activeTab = ref(typeof route.query.tab === "string" ? route.query.tab : "general");
 
 const flash = (r: { value: boolean }) => {
   r.value = true;
@@ -189,6 +193,7 @@ onMounted(async () => {
       <TabsList class="mb-6">
         <TabsTrigger value="general">{{ $t("settings.tabs.general") }}</TabsTrigger>
         <TabsTrigger v-if="canShop" value="shop">{{ $t("settings.tabs.shop") }}</TabsTrigger>
+        <TabsTrigger v-if="canSystem" value="backups">{{ $t("settings.tabs.backups") }}</TabsTrigger>
       </TabsList>
 
       <TabsContent value="general" class="space-y-5">
@@ -384,6 +389,10 @@ onMounted(async () => {
             </CardContent>
           </Card>
         </form>
+      </TabsContent>
+
+      <TabsContent v-if="canSystem" value="backups">
+        <BackupsTab />
       </TabsContent>
     </Tabs>
   </div>

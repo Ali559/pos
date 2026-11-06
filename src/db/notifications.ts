@@ -1,6 +1,8 @@
 import { select } from "./client";
 
-export type NotificationKind = "stock_low" | "stock_out" | "expiring" | "expired" | "expense_due";
+export type NotificationKind =
+  | "stock_low" | "stock_out" | "expiring" | "expired" | "expense_due"
+  | "backup_failed" | "backup_overdue";
 
 export interface AppNotification {
   id: number;
@@ -19,7 +21,7 @@ export const listNotifications = async (kinds: NotificationKind[]) => {
   const rows = await select<Omit<AppNotification, "payload"> & { payload: string | null }>(
     `SELECT id, kind, product_id, expense_id, payload, created_at, read_at FROM notifications
      WHERE resolved_at IS NULL AND dismissed_at IS NULL AND kind IN (${marks})
-     ORDER BY CASE kind WHEN 'stock_out' THEN 0 WHEN 'expired' THEN 1 ELSE 2 END, created_at DESC`,
+     ORDER BY CASE kind WHEN 'backup_failed' THEN 0 WHEN 'stock_out' THEN 1 WHEN 'expired' THEN 2 ELSE 3 END, created_at DESC`,
     kinds,
   );
   return rows.map((r) => ({ ...r, payload: r.payload ? JSON.parse(r.payload) : {} }));

@@ -1,5 +1,7 @@
 # Plan
 
+**§1–6 are done. What comes next is in `PLAN2.md` (Phase 7 onwards).**
+
 The committed scope for the next stretch of work. `FEATURES.md` stays as the wider backlog; anything here takes priority over it. Read `ARCHITECTURE.md` first for how the app is put together today.
 
 **Status key:** ✅ done · 🔜 next · ⬜ not started

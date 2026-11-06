@@ -1,5 +1,5 @@
 //! In-app alerts: low/out of stock, expiring/expired batches, recurring
-//! expenses waiting to be confirmed.
+//! expenses waiting to be confirmed, backups failing or overdue.
 //!
 //! `refresh` recomputes every condition from the data and reconciles the
 //! table: a new condition opens a row, a condition that no longer holds
@@ -16,6 +16,8 @@ use serde_json::{json, Value};
 use crate::auth;
 use crate::ctx::{now, Ctx};
 use crate::error::Result;
+
+const BACKUP_OVERDUE_DAYS: i64 = 3;
 
 type Key = (String, Option<i64>, Option<i64>, Option<i64>); // kind, product, batch, expense
 
@@ -80,6 +82,28 @@ async fn conditions(ctx: &Ctx) -> Result<Vec<Condition>> {
         out.push(Condition {
             key: ("expense_due".into(), None, None, Some(id)),
             payload: json!({ "name": name, "amount": amount, "date": on }),
+        });
+    }
+
+    // Backups: the last attempt failed, or there's been no good one for a
+    // while (automatic backups off, or failing every day)
+    let last_error = setting(ctx, "backup_last_error", "").await?;
+    let last_ok = setting(ctx, "backup_last_ok_at", "").await?;
+    if !last_error.is_empty() {
+        out.push(Condition {
+            key: ("backup_failed".into(), None, None, None),
+            payload: json!({ "error": last_error, "lastOk": last_ok }),
+        });
+    }
+    let overdue = match chrono::DateTime::parse_from_rfc3339(&last_ok) {
+        Ok(t) => chrono::Utc::now().signed_duration_since(t) > Duration::days(BACKUP_OVERDUE_DAYS),
+        // Never backed up: only worth an alert if nothing will do it soon
+        Err(_) => setting(ctx, "backup_auto", "1").await? == "0" && !crate::auth::needs_setup(ctx).await?,
+    };
+    if overdue {
+        out.push(Condition {
+            key: ("backup_overdue".into(), None, None, None),
+            payload: json!({ "lastOk": last_ok, "days": BACKUP_OVERDUE_DAYS }),
         });
     }
     Ok(out)
@@ -164,6 +188,16 @@ async fn notify_os(ctx: &Ctx, created: &[(String, Value)]) -> Result<()> {
     let lang = setting(ctx, "language", "ku").await?;
     for (kind, payload) in created {
         let name = payload["name"].as_str().unwrap_or_default();
+        // The error is a code or an English message; point to Settings instead
+        let name = if kind == "backup_failed" {
+            match lang.as_str() {
+                "ku" => "ڕێکخستنەکان ← باکئەپ ببینە",
+                "ar" => "راجع الإعدادات ← النسخ الاحتياطي",
+                _ => "See Settings → Backups",
+            }
+        } else {
+            name
+        };
         let title = match (kind.as_str(), lang.as_str()) {
             ("stock_out", "ku") => "کاڵا نەماوە",
             ("stock_out", "ar") => "نفد المخزون",
@@ -171,6 +205,9 @@ async fn notify_os(ctx: &Ctx, created: &[(String, Value)]) -> Result<()> {
             ("expired", "ku") => "کاڵا بەسەرچووە",
             ("expired", "ar") => "منتج منتهي الصلاحية",
             ("expired", _) => "Expired stock",
+            ("backup_failed", "ku") => "باکئەپ سەرکەوتوو نەبوو",
+            ("backup_failed", "ar") => "فشل النسخ الاحتياطي",
+            ("backup_failed", _) => "Backup failed",
             _ => continue,
         };
         notify(title, name);

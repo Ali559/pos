@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { Bell, CalendarClock, PackageX, Receipt, TriangleAlert, X } from "lucide-vue-next";
+import { Bell, CalendarClock, DatabaseBackup, PackageX, Receipt, TriangleAlert, X } from "lucide-vue-next";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,6 +22,7 @@ const auth = useAuth();
 const kinds = computed<NotificationKind[]>(() => [
   ...(auth.can("inventory.view") ? (["stock_low", "stock_out", "expiring", "expired"] as const) : []),
   ...(auth.can("expenses.view") ? (["expense_due"] as const) : []),
+  ...(auth.can("settings.system") ? (["backup_failed", "backup_overdue"] as const) : []),
 ]);
 
 const items = ref<AppNotification[]>([]);
@@ -57,9 +58,9 @@ const dismiss = async (n: AppNotification) => {
 };
 
 const icon = (k: NotificationKind) =>
-  ({ stock_out: PackageX, stock_low: TriangleAlert, expired: CalendarClock, expiring: CalendarClock, expense_due: Receipt })[k];
+  ({ stock_out: PackageX, stock_low: TriangleAlert, expired: CalendarClock, expiring: CalendarClock, expense_due: Receipt, backup_failed: DatabaseBackup, backup_overdue: DatabaseBackup })[k];
 const tone = (k: NotificationKind) =>
-  k === "stock_out" || k === "expired" ? "text-destructive bg-destructive/10" : "text-warning bg-warning/12";
+  k === "stock_out" || k === "expired" || k === "backup_failed" ? "text-destructive bg-destructive/10" : "text-warning bg-warning/12";
 
 // Inserted values (an English product name, a date) keep their own
 // direction inside a Kurdish/Arabic sentence: wrap them in Unicode
@@ -79,12 +80,17 @@ const text = (n: AppNotification) => {
       return t("alerts.expired", { name: iso(p.name), quantity: iso(p.quantity), date: iso(p.expiry) });
     case "expense_due":
       return t("alerts.expenseDue", { name: iso(String(p.name)), amount: iso(formatCurrency(Number(p.amount))), date: iso(p.date) });
+    case "backup_failed":
+      return t("alerts.backupFailed");
+    case "backup_overdue":
+      return t("alerts.backupOverdue", { days: iso(p.days) });
   }
 };
 
 const go = (n: AppNotification) => {
   open.value = false;
   if (n.kind === "expense_due") router.push("/main/expenses");
+  else if (n.kind === "backup_failed" || n.kind === "backup_overdue") router.push({ path: "/main/settings", query: { tab: "backups" } });
   else router.push({ path: "/main/inventory", query: { q: String(n.payload.name ?? "") } });
 };
 </script>

@@ -1,6 +1,7 @@
 mod audit;
 mod auth;
 mod background;
+mod backup;
 #[cfg(debug_assertions)]
 mod bridge;
 mod catalog;
@@ -37,6 +38,9 @@ fn print_receipt(webview: tauri::Webview) -> error::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Before the sql plugin: a staged restore must be in place before
+        // the database is opened
+        .plugin(backup::restore_plugin())
         .plugin(
             tauri_plugin_sql::Builder::new()
                 .add_migrations(db::DB_URL, db::migrations())
@@ -46,6 +50,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(Arc::new(ctx::SessionState::default()))
+        .manage(backup::RestoreCandidate::default())
         .setup(|app| {
             app.manage(db::open_read_pool(app.handle())?);
             background::start(app.handle().clone());
@@ -57,6 +62,9 @@ pub fn run() {
             media::upload_media,
             media::get_media_dir,
             export::save_csv,
+            backup::choose_backup_folder,
+            backup::inspect_backup,
+            backup::restore_backup,
             commands::select,
             commands::auth_status,
             commands::complete_setup,
@@ -106,6 +114,8 @@ pub fn run() {
             commands::delete_expense,
             commands::authorize_export,
             commands::lookup_barcode,
+            commands::backup_status,
+            commands::backup_now,
             commands::seed_demo_data,
         ])
         .run(tauri::generate_context!())
