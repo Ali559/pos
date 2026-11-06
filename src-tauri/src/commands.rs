@@ -119,6 +119,7 @@ commands! {
     save_promotion (pricing::SavePromotionArgs) -> i64 => pricing::save_promotion;
     delete_promotion (pricing::IdArgs) -> () => pricing::delete_promotion;
     bulk_update_prices (pricing::BulkPriceArgs) -> i64 => pricing::bulk_update_prices;
+    move_quick_key (catalog::QuickKeyMoveArgs) -> () => catalog::move_quick_key;
 
     backup_status -> backup::BackupStatus => backup::backup_status;
     backup_now -> backup::BackupFile => backup::backup_now;

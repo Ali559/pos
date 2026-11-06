@@ -51,7 +51,7 @@ pub async fn set_setting(ctx: &Ctx, args: SetSettingArgs) -> Result<()> {
                 _ => return Err(Error::Invalid("expiry_warn_days must be 0–90".into())),
             }
         }
-        "os_notifications" | "barcode_lookup" | "auto_print" | "block_expired" | "backup_auto" => {
+        "os_notifications" | "barcode_lookup" | "auto_print" | "block_expired" | "backup_auto" | "fullscreen" => {
             let actor = auth::require(ctx, "settings.system").await?;
             flag(v)?;
             Some(actor)

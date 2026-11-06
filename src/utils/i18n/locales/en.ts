@@ -76,6 +76,7 @@ export default {
     footerHint: "Printed at the bottom of every receipt, e.g. a thank-you or your return policy.",
   },
   pos: {
+    closeWithCart: "There is a sale on the till. Close anyway? It will be lost.",
     account: "On account",
     credit: "On account",
     priceAtTill: "Price at the till",
@@ -282,6 +283,8 @@ export default {
       osHint: "Also show out-of-stock and expired alerts outside the app.",
     },
     register: {
+      fullscreen: "Full screen",
+      fullscreenHint: "The app opens full screen on this computer. F11 switches any time.",
       title: "Register",
       receiptWidth: "Receipt paper",
       openingFloat: "Opening cash",
@@ -998,6 +1001,33 @@ export default {
     noPrinter: "Set a receipt printer in Settings to print labels on it one by one.",
     none: "No products.",
     print: "Print {n} label | Print {n} labels",
+  },
+  shortcuts: {
+    title: "Keyboard",
+    escAgain: "Esc again",
+    typing: "Typing anywhere goes to the scan field.",
+    keys: {
+      F2: "Scan field", F3: "Price check", F4: "Hold the sale", F5: "Held sales", F6: "Customer",
+      F7: "Discount on the sale", F8: "Pay cash", F9: "Pay by card", F10: "On account", F12: "Charge", Esc: "Clear (press twice)",
+    },
+  },
+  quickKeys: {
+    chip: "Quick",
+    pin: "Quick key",
+    pinHint: "Pinned to the front of the register, for fast sellers.",
+    earlier: "Move earlier",
+    later: "Move later",
+  },
+  display: {
+    toggle: "Customer screen",
+    welcome: "Welcome",
+    thanks: "Thank you!",
+    total: "Total",
+    subtotal: "Subtotal",
+    saved: "You saved",
+    tax: "Tax",
+    change: "Your change",
+    onAccount: "On your account:",
   },
   alerts: {
     title: "Alerts",

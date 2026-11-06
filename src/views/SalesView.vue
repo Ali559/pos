@@ -1,10 +1,21 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { ask } from "@tauri-apps/plugin-dialog";
+import { closeDisplay, displayOpen, onDisplayReady, openDisplay, publish, type DisplayState } from "@/lib/customerDisplay";
+import { inDesktopApp } from "@/lib/ipc";
+import { mediaUrl } from "@/lib/media";
+import { i18n } from "@/utils/i18n";
 import { useI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
 import {
   Banknote,
   Check,
+  Keyboard,
+  MonitorSmartphone,
+  ChevronLeft,
+  ChevronRight,
+  Star,
   CreditCard,
   History,
   Loader2,
@@ -70,13 +81,14 @@ interface SaleResult {
   refunded: number;
   /** Left on the customer's account */
   onAccount: number;
+  tendered: number | null;
 }
 
 /** What the done panel shows: a sale (maybe an exchange) or a plain refund */
 type Done = { kind: "sale"; sale: SaleResult } | { kind: "refund"; amount: number };
 
 const { t } = useI18n();
-const { taxRate, currency, load: loadShop } = useShop();
+const { taxRate, currency, load: loadShop, profile } = useShop();
 const auth = useAuth();
 const pinDialog = ref<InstanceType<typeof ManagerPinDialog> | null>(null);
 const discountDialog = ref<InstanceType<typeof DiscountDialog> | null>(null);
@@ -84,6 +96,10 @@ const cashDialog = ref<InstanceType<typeof CashDialog> | null>(null);
 const weightDialog = ref<InstanceType<typeof WeightDialog> | null>(null);
 const openPriceDialog = ref<InstanceType<typeof OpenPriceDialog> | null>(null);
 const priceCheckOpen = ref(false);
+const heldSales = ref<InstanceType<typeof HeldSales> | null>(null);
+const shortcutsOpen = ref(false);
+// Esc twice clears the cart; the first press only warns
+const clearArmed = ref(false);
 const onAccountDialog = ref<InstanceType<typeof OnAccountDialog> | null>(null);
 // Who's buying: needed to sell on account (قەرز)
 const customer = ref<Customer | null>(null);
@@ -130,7 +146,7 @@ const cartDiscount = ref(0);
 // Computed
 const roots = computed(() => categories.value.filter((c) => c.parent_id === null));
 const subcategories = computed(() =>
-  activeCategory.value === null
+  activeCategory.value === null || activeCategory.value === QUICK
     ? []
     : categories.value.filter((c) => c.parent_id === activeCategory.value),
 );
@@ -139,8 +155,24 @@ const pickCategory = (id: number | null) => {
   activeSub.value = null;
 };
 
+// Quick keys: products pinned to the front, in their own order
+const QUICK = -1;
+const quickProducts = computed(() =>
+  products.value.filter((p) => p.quickKey !== null).sort((a, b) => a.quickKey! - b.quickKey!),
+);
+const moveQuick = async (p: Product, by: number) => {
+  try {
+    await call("move_quick_key", { id: p.id, by });
+    await reloadProducts();
+  } catch (e) {
+    chargeError.value = errorMessage(e);
+  }
+};
+
 const visibleProducts = computed(() =>
-  activeSub.value !== null
+  activeCategory.value === QUICK
+    ? quickProducts.value
+    : activeSub.value !== null
     ? products.value.filter((p) => p.categoryId === activeSub.value)
     : activeCategory.value !== null
       ? products.value.filter((p) => p.rootCategoryId === activeCategory.value)
@@ -552,7 +584,130 @@ const refund = async () => {
 const print = (id: number, openDrawer = false) =>
   printReceipt(id, { openDrawer }).catch((e) => (chargeError.value = errorMessage(e)));
 
+// ------------------------------------------------------------ customer display
+// The second screen shows what's on the receipt: sent on every change
+const displayOn = ref(false);
+const logoUrl = ref<string | null>(null);
+const displayState = computed<DisplayState>(() => {
+  const done = lastSale.value?.kind === "sale" ? lastSale.value.sale : null;
+  return {
+    locale: i18n.global.locale.value as string,
+    dir: (document.documentElement.dir as "ltr" | "rtl") || "ltr",
+    shopName: profile.value?.name ?? "",
+    logo: logoUrl.value,
+    currency: currency.value,
+    mode: cartItems.value.length ? "cart" : done ? "done" : "idle",
+    lines: cartItems.value.map((i) => ({
+      name: i.unitName ? `${i.name} (${i.unitName})` : i.name,
+      qty: quantityLabel(i, unitLabel, productOf(i.id)?.unit ?? "piece"),
+      total: gross(i) - i.discount - promoOf(i),
+      saved: i.discount + promoOf(i),
+    })),
+    subtotal: subtotal.value,
+    discount: discount.value,
+    tax: tax.value,
+    total: cartItems.value.length ? total.value : done?.total ?? 0,
+    paid: done?.tendered ?? null,
+    change: done?.change ?? null,
+    onAccount: done?.onAccount || null,
+  };
+});
+// Always sent (nothing happens without a display), so a display that
+// opens or reloads at any moment catches up on the next change or on ready
+watch(displayState, (s) => publish(s), { deep: true });
+const toggleDisplay = async () => {
+  try {
+    if (displayOn.value) {
+      await closeDisplay();
+      displayOn.value = false;
+    } else {
+      await openDisplay();
+      displayOn.value = true;
+    }
+  } catch (e) {
+    chargeError.value = errorMessage(e);
+  }
+};
+
+// ------------------------------------------------------------ keyboard
+// F-keys for the common actions, Esc twice to clear, and typing anywhere
+// goes to the scan field (a scanner that fires while focus is elsewhere
+// still lands in the right place).
+const dialogOpen = () => !!document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]');
+const typingInField = (el: Element | null) =>
+  !!el && (el.tagName === "TEXTAREA" || el.tagName === "SELECT" || (el.tagName === "INPUT" && (el as HTMLInputElement).type !== "checkbox" && (el as HTMLInputElement).type !== "radio") || (el as HTMLElement).isContentEditable);
+
+const pay = (method: "cash" | "card" | "account") => {
+  if (method === "account" && !(customer.value && canAccount.value)) return;
+  payment.value = method;
+  checkout();
+};
+
+const onKey = (e: KeyboardEvent) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (dialogOpen()) return;
+  const actions: Record<string, () => void> = {
+    F1: () => (shortcutsOpen.value = !shortcutsOpen.value),
+    F2: () => focusScan(),
+    F3: () => (priceCheckOpen.value = true),
+    F4: () => heldSales.value?.startHold(),
+    F5: () => heldSales.value?.showHeld(),
+    F6: () => auth.can("customers.view") && (pickerOpen.value = true),
+    F7: () => cartItems.value.length && editCartDiscount(),
+    F8: () => pay("cash"),
+    F9: () => pay("card"),
+    F10: () => pay("account"),
+    F12: () => checkout(),
+  };
+  const action = actions[e.key];
+  if (action) {
+    // F5 would reload the page and F12 open the developer tools
+    e.preventDefault();
+    action();
+    return;
+  }
+  if (e.key === "Escape") {
+    if (shortcutsOpen.value) return void (shortcutsOpen.value = false);
+    if (!cartItems.value.length) return;
+    if (clearArmed.value) {
+      clearArmed.value = false;
+      clearCart();
+    } else {
+      clearArmed.value = true;
+      setTimeout(() => (clearArmed.value = false), 2500);
+    }
+    return;
+  }
+  // A printable key with nothing focused: start typing in the scan field
+  if (e.key.length === 1 && !typingInField(document.activeElement)) {
+    scanInput.value?.focus();
+  }
+};
+
+let unlisten: (() => void)[] = [];
+onUnmounted(() => {
+  window.removeEventListener("keydown", onKey);
+  unlisten.forEach((u) => u());
+});
+
 onMounted(async () => {
+  window.addEventListener("keydown", onKey);
+  displayOn.value = await displayOpen();
+  unlisten.push(await onDisplayReady(() => {
+    displayOn.value = true;
+    publish(displayState.value);
+  }));
+  if (inDesktopApp) {
+    // Closing the app with a sale on the till loses it: ask first
+    unlisten.push(await getCurrentWindow().onCloseRequested(async (e) => {
+      if (!cartItems.value.length) return void (await closeDisplay());
+      e.preventDefault();
+      if (await ask(t("pos.closeWithCart"), { kind: "warning" })) {
+        await closeDisplay();
+        await getCurrentWindow().destroy();
+      }
+    }));
+  }
   focusScan();
   // A new shift starts with counting the drawer
   call<{ openingCounted: boolean; openingFloat: number } | null>("shift_summary")
@@ -572,8 +727,13 @@ onMounted(async () => {
     runningPromotions().catch(() => []),
   ]);
   promos.value = running;
+  const logo = profile.value?.logo;
+  logoUrl.value = logo ? await mediaUrl(logo).catch(() => null) : null;
+  publish(displayState.value);
   categories.value = cats;
   products.value = prods;
+  // Start on the quick keys when the shop has pinned some
+  if (prods.some((p) => p.quickKey !== null)) pickCategory(QUICK);
   autoPrint.value = auto === "1";
   catalogLoaded.value = true;
 });
@@ -638,6 +798,7 @@ onMounted(async () => {
         >
           <ScanSearch :size="18" />
           {{ $t("priceCheck.button") }}
+          <kbd class="kbd">F3</kbd>
         </button>
         </div>
         <p
@@ -651,6 +812,17 @@ onMounted(async () => {
 
       <div class="space-y-2">
         <div class="flex flex-wrap gap-2" role="tablist" :aria-label="$t('inventory.table.category')">
+          <button
+            v-if="quickProducts.length"
+            type="button"
+            role="tab"
+            :aria-selected="activeCategory === QUICK"
+            @click="pickCategory(QUICK)"
+            class="flex h-10 items-center gap-1.5 rounded-full border px-4 text-sm font-medium transition-colors hover:border-foreground/30 aria-selected:border-foreground aria-selected:bg-foreground aria-selected:text-background"
+          >
+            <Star :size="15" />
+            {{ $t("quickKeys.chip") }}
+          </button>
           <button
             type="button"
             role="tab"
@@ -710,7 +882,12 @@ onMounted(async () => {
       <ul
         class="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3"
       >
-        <li v-for="p in visibleProducts" :key="p.id">
+        <li v-for="(p, i) in visibleProducts" :key="p.id" class="group/tile relative">
+          <!-- Reorder quick keys (people who edit the catalog) -->
+          <div v-if="activeCategory === QUICK && auth.can('inventory.edit')" class="absolute end-2 bottom-12 z-10 hidden gap-1 group-hover/tile:flex">
+            <button type="button" class="grid size-6 place-items-center rounded bg-card/90 shadow disabled:opacity-30" :disabled="i === 0" :aria-label="$t('quickKeys.earlier')" @click="moveQuick(p, -1)"><ChevronLeft :size="14" class="rtl:rotate-180" /></button>
+            <button type="button" class="grid size-6 place-items-center rounded bg-card/90 shadow disabled:opacity-30" :disabled="i === visibleProducts.length - 1" :aria-label="$t('quickKeys.later')" @click="moveQuick(p, 1)"><ChevronRight :size="14" class="rtl:rotate-180" /></button>
+          </div>
           <button
             type="button"
             @click="addProduct(p)"
@@ -765,6 +942,24 @@ onMounted(async () => {
         <header class="px-5 pt-5 pb-3">
           <div class="flex items-baseline justify-between">
             <h2 class="text-base font-semibold">{{ $t("pos.receipt") }}</h2>
+            <button
+              type="button"
+              class="ms-auto me-3 flex items-center gap-1 text-sm hover:text-foreground"
+              :class="displayOn ? 'text-primary' : 'text-muted-foreground'"
+              :aria-pressed="displayOn"
+              :title="$t('display.toggle')"
+              @click="toggleDisplay"
+            >
+              <MonitorSmartphone :size="15" />
+            </button>
+            <button
+              type="button"
+              class="me-3 hidden items-center gap-1 text-sm text-muted-foreground hover:text-foreground lg:flex"
+              :aria-pressed="shortcutsOpen"
+              @click="shortcutsOpen = !shortcutsOpen"
+            >
+              <Keyboard :size="15" /> F1
+            </button>
             <RouterLink
               to="/main/point-of-sale/history"
               class="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
@@ -1020,6 +1215,7 @@ onMounted(async () => {
           />
           <component :is="m.icon" :size="18" />
           {{ $t(`pos.${m.id}`) }}
+          <kbd class="kbd">{{ { cash: "F8", card: "F9", account: "F10" }[m.id] }}</kbd>
         </label>
       </fieldset>
 
@@ -1036,12 +1232,14 @@ onMounted(async () => {
         <span class="flex items-center gap-2">
           <Loader2 v-if="charging" class="animate-spin" />
           {{ net < 0 ? $t("returnCart.refund") : $t("pos.charge") }}
+          <kbd class="kbd">F12</kbd>
         </span>
         <span>{{ formatCurrency(Math.abs(net)) }}</span>
       </Button>
 
       <div class="grid grid-cols-[1fr_auto_1fr] gap-2">
         <HeldSales
+          ref="heldSales"
           :cart="heldCart"
           :can-hold="cartItems.length > 0 && !returns.active.value"
           :can-resume="cartItems.length === 0"
@@ -1056,7 +1254,8 @@ onMounted(async () => {
           @click="clearCart"
         >
           <Trash2 />
-          {{ $t("pos.clearCart") }}
+          {{ clearArmed ? $t("shortcuts.escAgain") : $t("pos.clearCart") }}
+          <kbd class="kbd">Esc</kbd>
         </Button>
       </div>
     </aside>
@@ -1067,6 +1266,21 @@ onMounted(async () => {
     <OpenPriceDialog ref="openPriceDialog" />
     <PriceCheckDialog v-model:open="priceCheckOpen" />
     <CustomerPicker v-model:open="pickerOpen" @pick="pickCustomer" />
+    <!-- F1: the keys, in a corner, until F1/Esc again -->
+    <div
+      v-if="shortcutsOpen"
+      role="status"
+      class="fixed bottom-6 start-24 z-40 w-72 rounded-xl border bg-card p-4 text-sm shadow-xl"
+    >
+      <p class="mb-2 flex items-center gap-2 font-semibold"><Keyboard :size="16" />{{ $t("shortcuts.title") }}</p>
+      <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        <template v-for="k in ['F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F12', 'Esc']" :key="k">
+          <dt><kbd class="rounded border px-1.5 font-mono text-xs">{{ k }}</kbd></dt>
+          <dd>{{ $t(`shortcuts.keys.${k}`) }}</dd>
+        </template>
+      </dl>
+      <p class="mt-2 text-xs text-muted-foreground">{{ $t("shortcuts.typing") }}</p>
+    </div>
     <OnAccountDialog ref="onAccountDialog" />
     <OpeningCashDialog v-model:open="openingOpen" :expected="openingExpected" @counted="focusScan()" />
   </div>

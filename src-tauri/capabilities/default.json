@@ -1,12 +1,23 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window. No direct SQL: reads go through the read-only `select` command, writes through permission-checked commands.",
+  "description": "Main window and the customer display. No direct SQL: reads go through the read-only `select` command, writes through permission-checked commands.",
   "windows": [
-    "main"
+    "main",
+    "customer"
   ],
   "permissions": [
     "core:default",
-    "opener:default"
+    "opener:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-available-monitors",
+    "core:window:allow-current-monitor",
+    "core:window:allow-set-position",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-set-focus",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "dialog:allow-ask"
   ]
 }

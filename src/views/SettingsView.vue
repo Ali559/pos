@@ -76,7 +76,7 @@ const saveAlerts = async () => {
 };
 
 // Register: receipts, drawer, barcode lookup
-const register = ref({ receiptWidth: "80", autoPrint: false, openingFloat: 0, barcodeLookup: true, blockExpired: false });
+const register = ref({ receiptWidth: "80", autoPrint: false, openingFloat: 0, barcodeLookup: true, blockExpired: false, fullscreen: false });
 
 // Receipt printer: the system dialog, an installed printer, or a network one
 const printerMode = ref<"dialog" | "system" | "network">("dialog");
@@ -111,6 +111,7 @@ const saveRegister = async () => {
     await setSetting("opening_float", String(Math.max(0, Number(r.openingFloat) || 0)));
     await setSetting("barcode_lookup", r.barcodeLookup ? "1" : "0");
     await setSetting("block_expired", r.blockExpired ? "1" : "0");
+    await setSetting("fullscreen", r.fullscreen ? "1" : "0");
     await setSetting("receipt_printer", printerTarget.value);
     flash(registerSaved);
   } catch (e) {
@@ -193,8 +194,8 @@ onMounted(async () => {
   resetShopForm();
   warnDays.value = Number(await getSetting("expiry_warn_days")) || 7;
   osAlerts.value = (await getSetting("os_notifications")) !== "0";
-  const [width, auto, float, lookup, blockExpired, printer] = await Promise.all(
-    ["receipt_width", "auto_print", "opening_float", "barcode_lookup", "block_expired", "receipt_printer"].map(getSetting),
+  const [width, auto, float, lookup, blockExpired, printer, fullscreen] = await Promise.all(
+    ["receipt_width", "auto_print", "opening_float", "barcode_lookup", "block_expired", "receipt_printer", "fullscreen"].map(getSetting),
   );
   register.value = {
     receiptWidth: width === "58" ? "58" : "80",
@@ -202,6 +203,7 @@ onMounted(async () => {
     openingFloat: Number(float) || 0,
     barcodeLookup: lookup !== "0",
     blockExpired: blockExpired === "1",
+    fullscreen: fullscreen === "1",
   };
   if (printer?.startsWith("system:")) {
     printerMode.value = "system";
@@ -342,6 +344,13 @@ onMounted(async () => {
                 <span>
                   <span class="font-medium">{{ $t("settings.register.barcodeLookup") }}</span>
                   <span class="block text-muted-foreground">{{ $t("settings.register.barcodeLookupHint") }}</span>
+                </span>
+              </label>
+              <label class="flex items-center gap-3 text-sm">
+                <input v-model="register.fullscreen" type="checkbox" class="size-4 accent-primary" />
+                <span>
+                  <span class="font-medium">{{ $t("settings.register.fullscreen") }}</span>
+                  <span class="block text-muted-foreground">{{ $t("settings.register.fullscreenHint") }}</span>
                 </span>
               </label>
               <label class="flex items-center gap-3 text-sm">

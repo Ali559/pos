@@ -236,6 +236,10 @@ textarea {
     background-repeat: repeat-x;
     height: 1px;
   }
+  /* A keyboard shortcut hint on a button (hidden on narrow screens) */
+  .kbd {
+    @apply hidden rounded border border-current/25 px-1 font-mono text-[10px] leading-4 font-medium opacity-60 lg:inline-block;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

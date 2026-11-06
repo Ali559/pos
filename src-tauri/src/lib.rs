@@ -141,6 +141,7 @@ pub fn run() {
             commands::save_promotion,
             commands::delete_promotion,
             commands::bulk_update_prices,
+            commands::move_quick_key,
             commands::backup_status,
             commands::backup_now,
             commands::seed_demo_data,

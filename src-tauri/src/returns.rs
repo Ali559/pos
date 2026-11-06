@@ -85,20 +85,33 @@ fn check_qty(name: &str, unit: &str, qty: f64) -> Result<()> {
 }
 
 async fn prepare_sale_lines(tx: &mut Transaction<'_, Sqlite>, sale_id: i64, lines: &[ReturnLine], currency: &str) -> Result<Vec<Prepared>> {
-    let status: Option<(String,)> = sqlx::query_as("SELECT payment_status FROM sales WHERE id = $1")
+    let sale: Option<(String, f64)> = sqlx::query_as("SELECT payment_status, CAST(COALESCE(tax_amount, 0) AS REAL) FROM sales WHERE id = $1")
         .bind(sale_id)
         .fetch_optional(&mut **tx)
         .await?;
-    if status.is_none() {
+    let Some((_, sale_tax)) = sale else {
         return Err(Error::NotFound);
-    }
+    };
+    // Each line's share of the tax the sale actually charged (rounded once,
+    // on the whole sale), so refunds add up to exactly what was paid
+    let all: Vec<(i64, f64, f64)> = sqlx::query_as(
+        "SELECT id, CAST(subtotal AS REAL), CAST(COALESCE(tax_rate, 0) AS REAL) FROM sale_items WHERE sale_id = $1 ORDER BY id",
+    )
+    .bind(sale_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let weights: Vec<f64> = all.iter().map(|(_, sub, rate)| if *rate > 0.0 { *sub } else { 0.0 }).collect();
+    let shares: std::collections::HashMap<i64, f64> =
+        all.iter().map(|(id, ..)| *id).zip(crate::sales::allocate(sale_tax, &weights, currency)).collect();
     let mut out = Vec::new();
     for l in lines.iter().filter(|l| l.quantity != 0.0) {
-        let row: Option<(i64, String, f64, f64, f64, f64, String, f64, f64)> = sqlx::query_as(
+        #[allow(clippy::type_complexity)]
+        let row: Option<(i64, String, f64, f64, f64, f64, String, f64, f64, f64)> = sqlx::query_as(
             "SELECT si.product_id, si.product_name, CAST(si.quantity AS REAL), CAST(si.subtotal AS REAL),
                     CAST(COALESCE(si.tax_rate, 0) AS REAL), CAST(si.cost_price AS REAL), COALESCE(p.unit, 'piece'),
                     CAST(COALESCE((SELECT SUM(quantity) FROM return_items WHERE sale_item_id = si.id), 0) AS REAL),
-                    CAST(COALESCE((SELECT SUM(subtotal) FROM return_items WHERE sale_item_id = si.id), 0) AS REAL)
+                    CAST(COALESCE((SELECT SUM(subtotal) FROM return_items WHERE sale_item_id = si.id), 0) AS REAL),
+                    CAST(COALESCE((SELECT SUM(refund_amount - subtotal) FROM return_items WHERE sale_item_id = si.id), 0) AS REAL)
              FROM sale_items si LEFT JOIN products p ON p.id = si.product_id
              WHERE si.id = $1 AND si.sale_id = $2",
         )
@@ -106,7 +119,7 @@ async fn prepare_sale_lines(tx: &mut Transaction<'_, Sqlite>, sale_id: i64, line
         .bind(sale_id)
         .fetch_optional(&mut **tx)
         .await?;
-        let Some((product_id, name, sold, line_subtotal, tax_rate, cost, unit, returned, returned_subtotal)) = row else {
+        let Some((product_id, name, sold, line_subtotal, _tax_rate, cost, unit, returned, returned_subtotal, returned_tax)) = row else {
             return Err(Error::NotFound);
         };
         check_qty(&name, &unit, l.quantity)?;
@@ -115,12 +128,16 @@ async fn prepare_sale_lines(tx: &mut Transaction<'_, Sqlite>, sale_id: i64, line
         }
         // The last of a line gets exactly what's left of it, so rounding
         // never refunds more than was paid
-        let subtotal = if (sold - returned - l.quantity).abs() < 1e-9 {
-            line_subtotal - returned_subtotal
+        let line_tax = shares.get(&l.sale_item_id).copied().unwrap_or(0.0);
+        let (subtotal, tax) = if (sold - returned - l.quantity).abs() < 1e-9 {
+            (line_subtotal - returned_subtotal, line_tax - returned_tax)
         } else {
-            round_money(line_subtotal / sold * l.quantity, currency)
+            (
+                round_money(line_subtotal / sold * l.quantity, currency),
+                round_money(line_tax / sold * l.quantity, currency).min(line_tax - returned_tax),
+            )
         };
-        let refund = subtotal + round_money(subtotal * tax_rate / 100.0, currency);
+        let refund = subtotal + tax;
         out.push(Prepared { sale_item_id: Some(l.sale_item_id), product_id, name, qty: l.quantity, cost, subtotal, refund, restock: l.restock });
     }
     Ok(out)
@@ -352,6 +369,64 @@ mod tests {
 
     async fn one(ctx: &Ctx, sql: &str, id: i64) -> f64 {
         sqlx::query_as::<_, (f64,)>(&format!("SELECT CAST(({sql}) AS REAL)")).bind(id).fetch_one(&ctx.pool).await.unwrap().0
+    }
+
+    #[test]
+    fn allocate_always_adds_up() {
+        use crate::sales::allocate;
+        // Awkward weights and amounts: the parts must sum to the whole exactly
+        for (amount, weights) in [
+            (1000.0, vec![1.0, 1.0, 1.0]),
+            (100.0, vec![750.0, 1000.0, 333.0]),
+            (1.0, vec![3.0, 3.0, 3.0, 3.0]),
+            (2501.0, vec![0.5, 7.25, 1000.0]),
+        ] {
+            let parts = allocate(amount, &weights, "IQD");
+            assert_eq!(parts.iter().sum::<f64>(), amount, "{amount} over {weights:?}");
+            assert!(parts.iter().all(|p| *p >= 0.0));
+        }
+        assert_eq!(allocate(0.0, &[1.0, 2.0], "IQD"), vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn returning_one_at_a_time_refunds_exactly_what_was_paid() {
+        tauri::async_runtime::block_on(async {
+            let ctx = test_support::ctx().await;
+            setup_owner(&ctx).await;
+            crate::settings::set_setting(&ctx, crate::settings::SetSettingArgs { key: "tax_rate".into(), value: "10".into() }).await.unwrap();
+            // 3 × 1000 with 100 off the whole sale: 2900 + 290 tax = 3190.
+            // A third of 2900 doesn't divide evenly in dinars.
+            let mut p = product("Tea", "1", 10.0);
+            p.selling_price = 1000.0;
+            let tea = create_product(&ctx, p).await.unwrap();
+            let mut args = sell(tea, 3.0, "cash");
+            args.cart_discount = 100.0;
+            let sale = checkout(&ctx, args).await.unwrap();
+            assert_eq!(sale.total, 3190.0);
+            let (line,): (i64,) = sqlx::query_as("SELECT id FROM sale_items WHERE sale_id = $1").bind(sale.id).fetch_one(&ctx.pool).await.unwrap();
+            let mut refunded = 0.0;
+            for _ in 0..3 {
+                let r = create_return(&ctx, ReturnArgs {
+                    items: ReturnItems { sale_id: Some(sale.id), lines: vec![ReturnLine { sale_item_id: line, quantity: 1.0, restock: true }], ..Default::default() },
+                    refund_method: "cash".into(),
+                    override_token: None,
+                })
+                .await
+                .unwrap();
+                refunded += r.refund;
+            }
+            assert_eq!(refunded, 3190.0, "the last piece takes the remainder");
+            // And nothing more can come back
+            let r = create_return(&ctx, ReturnArgs {
+                items: ReturnItems { sale_id: Some(sale.id), lines: vec![ReturnLine { sale_item_id: line, quantity: 1.0, restock: true }], ..Default::default() },
+                refund_method: "cash".into(),
+                override_token: None,
+            })
+            .await;
+            assert!(r.is_err());
+            let (status,): (String,) = sqlx::query_as("SELECT payment_status FROM sales WHERE id = $1").bind(sale.id).fetch_one(&ctx.pool).await.unwrap();
+            assert_eq!(status, "refunded");
+        });
     }
 
     #[test]

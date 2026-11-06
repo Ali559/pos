@@ -153,18 +153,29 @@ Built 2026-11-07 (`src-tauri/src/import.rs`, `src/lib/labels.ts`, `src/lib/ean13
 - **Export** (More → *Export the catalog*): the products the list shows as CSV with the import's column names, so a file can be exported, edited in Excel and imported back. Uses the `analytics.export` permission.
 - **Labels** (More → *Print labels*): every product the list shows, or every product whose price changed since a date (for re-labelling shelves after a price change), any number of copies. Name, price (per kg for weighed products) and a barcode: EAN-13 when the product has a valid 12/13-digit code, else Code 128 of its barcode or SKU. Printed as an A4 sheet (3 across) through the print dialog, or one label at a time on the receipt printer (each cut off), drawn at 203 dpi like receipts so Kurdish and Arabic are shaped correctly.
 
-## 13. Till comfort and platform ⬜
+## 13. Till comfort and platform ✅ (except auto-update)
 
-| Item | Size | Notes |
+Built 2026-11-07 (migration `0014`, `src/lib/customerDisplay.ts`, `src/components/display/`). Shortcuts, quick keys and the customer display were checked in the browser preview; the display as a real second window on a second monitor, fullscreen and the close guard need the desktop app.
+
+| Item | Size | Status |
 | --- | --- | --- |
-| Keyboard shortcuts | S | F2 scan, F4 hold, F8 cash, F9 card, F12 charge, Esc clear (with confirm); small key hints on the buttons. |
-| Quick keys | S | The manager pins the 12–20 fastest sellers to the top of the register grid. |
-| Customer display | M | A second window on a second monitor showing the cart, total and change. |
-| Fullscreen / kiosk mode | S | No window decorations, no accidental close during a sale. |
-| Auto-update | S | `tauri-plugin-updater`; needs a signing key and somewhere to host releases. |
-| Tests for money paths | M | Cart totals, discounts spread over lines, returns, exchanges, rounding, currency. |
+| Keyboard shortcuts | S | ✅ |
+| Quick keys | S | ✅ |
+| Customer display | M | ✅ |
+| Fullscreen / kiosk mode | S | ✅ |
+| Auto-update | S | ⬜ needs a signing key and a place to host releases |
+| Tests for money paths | M | ✅ (and found a refund rounding bug) |
 
----
+**How it works**
+- **Keyboard** (register): F2 scan field, F3 price check, F4 hold, F5 held sales, F6 customer, F7 discount on the sale, F8 pay cash, F9 pay card, F10 on account, F12 charge, Esc twice to clear. F1 shows the list. Typing anywhere with nothing focused goes to the scan field, so a scanner never types into the void. Keys are ignored while a dialog is open; hints are shown on the buttons on wide screens.
+- **Quick keys**: *Quick key* in the product form pins a product to the front of the register; a ★ *Quick* chip comes first and is selected at start when anything is pinned. People who edit the catalog can move quick keys earlier/later right on the tiles.
+- **Customer display**: the screen icon by the receipt title opens a second window (full screen on another monitor when there is one) showing the shop's logo and name between customers, the lines and the total while ringing up, and *thank you* with the change (and anything put on account) after the sale. It only listens to the till (`display:state` events); it never reads the database. In the browser dev preview it's a second tab over a BroadcastChannel.
+- **Fullscreen**: Settings → Register → *Full screen* opens the app full screen on that computer; F11 switches any time. Closing the window with a sale on the till asks first.
+- **Money-path tests**: `allocate` always adds up exactly; returning a discounted line one piece at a time refunds exactly what was paid. That second test caught a real bug: each partial return rounded its own tax, so three returns could refund 1 IQD more than the sale took. Refunds now use each line's share of the tax the sale actually charged, and the last piece gets exactly what's left (the return dialog's preview mirrors it).
+
+**Auto-update — needs your decision**
+- Tauri's updater checks a JSON file at a URL you choose (e.g. a GitHub release of `Ali559/pos`), downloads the new version and checks its signature against a public key built into the app.
+- It needs: a signing key pair (the private key stays with you, never in the repo), the place releases are published, and building/publishing a release for each version.
 
 ## Carried over from PLAN.md
 

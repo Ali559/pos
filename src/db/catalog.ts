@@ -58,6 +58,8 @@ export interface Product {
   /** Price at the wholesale level; null = same as retail */
   wholesalePrice: number | null;
   taxExempt: number;
+  /** Position among the register's quick keys; null = not pinned */
+  quickKey: number | null;
   cover: MediaFile | null;
   /** Pack sizes, filled by listProducts / findProductByCode */
   units: ProductUnit[];
@@ -101,7 +103,7 @@ const PRODUCT_COLUMNS = `
   COALESCE(c.color, pc.color) AS categoryColor,
   c.icon_key AS categoryIcon,
   p.open_price AS openPrice, p.track_stock AS trackStock, p.plu,
-  p.wholesale_price AS wholesalePrice, p.tax_exempt AS taxExempt,
+  p.wholesale_price AS wholesalePrice, p.tax_exempt AS taxExempt, p.quick_key AS quickKey,
   m.id AS m_id, m.uuid AS m_uuid, m.path AS m_path, m.mime AS m_mime,
   m.width AS m_width, m.height AS m_height, m.bytes AS m_bytes, m.blurhash AS m_blurhash`;
 
@@ -230,6 +232,7 @@ export interface ProductDetail {
   track_stock: number;
   wholesale_price: number | null;
   tax_exempt: number;
+  quick_key: number | null;
   extraBarcodes: string[];
   media: MediaFile[];
   units: ProductUnit[];
@@ -258,7 +261,7 @@ export const getProduct = async (id: number): Promise<ProductDetail | null> => {
   const p = await selectOne<Omit<ProductDetail, "extraBarcodes" | "media" | "units" | "qtyPrices">>(
     `SELECT id, sku, name, category_id, barcode, cost_price, selling_price,
             min_stock_level, unit, icon_key, is_active, stock_quantity, plu, open_price, track_stock,
-            wholesale_price, tax_exempt
+            wholesale_price, tax_exempt, quick_key
      FROM products WHERE id = $1`,
     [id],
   );

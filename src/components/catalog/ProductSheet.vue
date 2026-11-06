@@ -46,6 +46,7 @@ const blank = () => ({
   isActive: true, initialStock: "0", initialExpiry: "", stock: 0,
   units: [] as PackDraft[], plu: "", openPrice: false, trackStock: true,
   wholesalePrice: "", qtyPrices: [] as { minQty: string; price: string }[], taxExempt: false,
+  quickKey: false,
 });
 const history = ref<PriceChange[]>([]);
 
@@ -111,6 +112,7 @@ const load = async () => {
     wholesalePrice: p.wholesale_price != null ? String(p.wholesale_price) : "",
     qtyPrices: p.qtyPrices.map((q) => ({ minQty: String(q.minQty), price: String(q.price) })),
     taxExempt: !!p.tax_exempt,
+    quickKey: p.quick_key !== null,
   };
   history.value = await getPriceHistory(p.id);
   images.value = p.media;
@@ -196,6 +198,7 @@ const save = async () => {
     wholesalePrice: f.wholesalePrice === "" ? null : Number(f.wholesalePrice),
     qtyPrices: f.qtyPrices.filter((q) => q.minQty !== "" && q.price !== "").map((q) => ({ minQty: Number(q.minQty), price: Number(q.price) })),
     taxExempt: f.taxExempt,
+    quickKey: f.quickKey,
   };
   saving.value = true;
   error.value = "";
@@ -428,6 +431,13 @@ const save = async () => {
         <span>
           <span class="font-medium">{{ $t("catalog.openPrice") }}</span>
           <span class="block text-muted-foreground">{{ $t("catalog.openPriceHint") }}</span>
+        </span>
+      </label>
+      <label class="flex items-center gap-3 text-sm">
+        <input v-model="form.quickKey" type="checkbox" class="size-4 accent-primary" />
+        <span>
+          <span class="font-medium">{{ $t("quickKeys.pin") }}</span>
+          <span class="block text-muted-foreground">{{ $t("quickKeys.pinHint") }}</span>
         </span>
       </label>
       <label class="flex items-center gap-3 text-sm">

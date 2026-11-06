@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { ArrowLeftRight, Minus, Plus, Undo2 } from "lucide-vue-next";
 import { useRouter } from "vue-router";
+import { allocate } from "@/lib/pricing";
 import { useReturnCart } from "@/stores/returnCart";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,11 +49,17 @@ const step = (i: number, by: number) => {
 const takeAll = () => rows.value.forEach((r, i) => (r.qty = left(i)));
 
 const round = (n: number) => (currency.value === "IQD" ? Math.round(n) : Math.round(n * 100) / 100);
-// Same arithmetic as returns::create_return, for the preview only
+// Same arithmetic as returns::create_return, for the preview only: each
+// line's tax is its share of the tax the sale charged, and all of what's
+// left comes back with the last piece
+const taxShares = computed(() =>
+  allocate(props.sale.tax, props.sale.lines.map((l) => (l.tax_rate > 0 ? l.subtotal : 0)), currency.value),
+);
 const lineRefund = (i: number, qty: number) => {
   const l = props.sale.lines[i]!;
-  const sub = round((l.subtotal / l.quantity) * qty);
-  return sub + round((sub * l.tax_rate) / 100);
+  const share = taxShares.value[i] ?? 0;
+  if (l.returned === 0 && qty === l.quantity) return l.subtotal + share;
+  return round((l.subtotal / l.quantity) * qty) + round((share / l.quantity) * qty);
 };
 const refund = computed(() => rows.value.reduce((sum, r, i) => sum + (r.qty ? lineRefund(i, r.qty) : 0), 0));
 

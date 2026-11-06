@@ -280,6 +280,48 @@ pub struct ProductInput {
     /// No tax on this product
     #[serde(default)]
     pub tax_exempt: bool,
+    /// Pinned to the register's quick keys
+    #[serde(default)]
+    pub quick_key: bool,
+}
+
+/// Pins (at the end of the quick keys) or unpins a product.
+async fn set_quick_key(tx: &mut Transaction<'_, Sqlite>, id: i64, pinned: bool) -> Result<()> {
+    if pinned {
+        sqlx::query(
+            "UPDATE products SET quick_key = (SELECT COALESCE(MAX(quick_key), 0) + 1 FROM products) WHERE id = $1 AND quick_key IS NULL",
+        )
+        .bind(id)
+        .execute(&mut **tx)
+        .await?;
+    } else {
+        sqlx::query("UPDATE products SET quick_key = NULL WHERE id = $1").bind(id).execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickKeyMoveArgs {
+    pub id: i64,
+    /// -1 = earlier, +1 = later
+    pub by: i64,
+}
+
+/// Moves a quick key one place earlier or later.
+pub async fn move_quick_key(ctx: &Ctx, args: QuickKeyMoveArgs) -> Result<()> {
+    auth::require(ctx, "inventory.edit").await?;
+    let mut tx = ctx.pool.begin().await?;
+    let pinned: Vec<(i64,)> = sqlx::query_as("SELECT id FROM products WHERE quick_key IS NOT NULL ORDER BY quick_key, id").fetch_all(&mut *tx).await?;
+    let mut ids: Vec<i64> = pinned.into_iter().map(|(i,)| i).collect();
+    let Some(at) = ids.iter().position(|i| *i == args.id) else { return Err(Error::NotFound) };
+    let to = (at as i64 + args.by.signum()).clamp(0, ids.len() as i64 - 1) as usize;
+    ids.swap(at, to);
+    for (pos, id) in ids.iter().enumerate() {
+        sqlx::query("UPDATE products SET quick_key = $1 WHERE id = $2").bind(pos as i64 + 1).bind(id).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -562,6 +604,7 @@ pub async fn create_product(ctx: &Ctx, p: ProductInput) -> Result<i64> {
     write_children(&mut tx, id, &codes, &p.media_ids).await?;
     write_units(&mut tx, id, &p.units).await?;
     write_qty_prices(&mut tx, id, &p.qty_prices).await?;
+    set_quick_key(&mut tx, id, p.quick_key).await?;
     if stock > 0.0 {
         sqlx::query(
             "INSERT INTO stock_adjustments (product_id, adjustment_type, quantity, reason, user_id, created_at)
@@ -642,6 +685,7 @@ pub async fn update_product(ctx: &Ctx, args: UpdateProductArgs) -> Result<()> {
     write_children(&mut tx, args.id, &codes, &p.media_ids).await?;
     write_units(&mut tx, args.id, &p.units).await?;
     write_qty_prices(&mut tx, args.id, &p.qty_prices).await?;
+    set_quick_key(&mut tx, args.id, p.quick_key).await?;
     tx.commit().await?;
     audit::log(ctx, Some(actor.user_id), "product.update", "products", Some(args.id), &serde_json::json!({ "name": p.name })).await
 }

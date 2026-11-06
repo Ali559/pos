@@ -68,6 +68,12 @@ const hold = async () => {
   }
 };
 
+// Keyboard: F4 holds, F5 opens the list (SalesView)
+defineExpose({
+  startHold: () => props.canHold && (holdOpen.value = true),
+  showHeld: () => rows.value.length > 0 && props.canResume && (listOpen.value = true),
+});
+
 const take = async (id: number, resume: boolean) => {
   error.value = "";
   try {
@@ -90,6 +96,7 @@ const take = async (id: number, resume: boolean) => {
         <Button variant="outline" size="lg" class="min-w-0 px-3" :disabled="!canHold">
           <PauseCircle />
           {{ $t("pos.hold") }}
+          <kbd class="kbd">F4</kbd>
         </Button>
       </PopoverTrigger>
       <PopoverContent class="w-72">
