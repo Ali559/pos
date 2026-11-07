@@ -38,13 +38,23 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
   },
   "plugins": {
     "sql": {
       "preload": [
         "sqlite:pos.db"
       ]
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI1QTJGNkU3NUQzQTEwMTMKUldRVEVEcGQ1L2FpdGIweDFqemV4TjJiMjIwRjgzT1g5cHBZRytRRTFsaW5hVVc2cnptZ25BMWwK",
+      "endpoints": [
+        "https://github.com/Ali559/pos/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

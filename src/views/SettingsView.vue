@@ -25,6 +25,8 @@ import type { ShopProfile } from "@/db/shop";
 import type { MediaFile } from "@/lib/media";
 import { getSetting, setSetting } from "@/db/settings";
 import { printTestPage } from "@/lib/print";
+import { available, checkForUpdate, currentVersion } from "@/lib/updates";
+import { inDesktopApp } from "@/lib/ipc";
 
 const { t } = useI18n();
 const { theme } = useTheme();
@@ -146,6 +148,18 @@ const saveScale = async () => {
   }
 };
 
+// About: this version, and a manual check for a newer one
+const version = ref("");
+const updateMessage = ref("");
+const checking = ref(false);
+const checkNow = async () => {
+  checking.value = true;
+  updateMessage.value = "";
+  const u = await checkForUpdate();
+  checking.value = false;
+  updateMessage.value = u ? t("updates.ready", { version: u.version }) : t("updates.upToDate");
+};
+
 // Shop profile
 const shopForm = ref<ShopProfile | null>(null);
 const shopLogo = ref<MediaFile | null>(null);
@@ -189,6 +203,7 @@ const loadSampleData = async () => {
 };
 
 onMounted(async () => {
+  currentVersion().then((v) => (version.value = v));
   await shop.load();
   taxDraft.value = shop.taxRate.value;
   resetShopForm();
@@ -437,6 +452,17 @@ onMounted(async () => {
                 <span v-if="alertsError" role="alert" class="text-sm text-destructive">{{ alertsError }}</span>
               </div>
             </form>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>{{ $t("updates.about") }}</CardTitle>
+          </CardHeader>
+          <CardContent class="flex flex-wrap items-center gap-4">
+            <p class="flex-1 text-sm">{{ $t("updates.version", { version }) }}</p>
+            <Button v-if="inDesktopApp" variant="outline" :disabled="checking" @click="checkNow">{{ $t("updates.check") }}</Button>
+            <p v-if="updateMessage" role="status" class="basis-full text-sm" :class="available ? 'text-primary' : 'text-muted-foreground'">{{ updateMessage }}</p>
           </CardContent>
         </Card>
 

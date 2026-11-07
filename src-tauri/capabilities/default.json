@@ -18,6 +18,8 @@
     "core:window:allow-set-focus",
     "core:window:allow-close",
     "core:window:allow-destroy",
-    "dialog:allow-ask"
+    "dialog:allow-ask",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

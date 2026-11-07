@@ -1029,6 +1029,17 @@ export default {
     change: "Your change",
     onAccount: "On your account:",
   },
+  updates: {
+    ready: "Version {version} is ready.",
+    restartHint: "Installing restarts the app, so pick a moment between customers.",
+    install: "Install and restart",
+    installing: "Installing… {percent}%",
+    later: "Later",
+    about: "About",
+    version: "Version {version}",
+    check: "Check for updates",
+    upToDate: "This is the newest version.",
+  },
   alerts: {
     title: "Alerts",
     titleUnread: "Alerts, {n} new",

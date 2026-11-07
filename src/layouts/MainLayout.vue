@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Header from "@/components/menus/Header.vue";
 import Sidebar from "@/components/menus/Sidebar.vue";
+import UpdateBanner from "@/components/menus/UpdateBanner.vue";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
@@ -17,6 +18,7 @@ const title = computed(() =>
   <div class="flex h-full overflow-hidden">
     <Sidebar />
     <div class="flex min-w-0 flex-1 flex-col">
+      <UpdateBanner />
       <Header :page-title="title" />
       <main class="min-h-0 flex-1 overflow-y-auto">
         <router-view />

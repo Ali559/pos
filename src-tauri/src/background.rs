@@ -11,9 +11,13 @@ use crate::ctx::Ctx;
 use crate::{backup, catalog, expenses, media, notifications};
 
 const EVERY: Duration = Duration::from_secs(60 * 60);
+/// The sql plugin opens the database in the background at startup; until
+/// it has, try again soon rather than in an hour
+const NOT_READY_RETRY: Duration = Duration::from_secs(3);
 
 pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
+        let mut waited = false;
         loop {
             match Ctx::from_app(&app).await {
                 Ok(ctx) => {
@@ -32,6 +36,14 @@ pub fn start(app: AppHandle) {
                     if let Err(e) = media::clean_unused(&ctx).await {
                         eprintln!("[background] media cleanup: {e}");
                     }
+                }
+                Err(crate::error::Error::DbNotReady) => {
+                    if !waited {
+                        eprintln!("[background] waiting for the database");
+                        waited = true;
+                    }
+                    tokio::time::sleep(NOT_READY_RETRY).await;
+                    continue;
                 }
                 Err(e) => eprintln!("[background] {e}"),
             }

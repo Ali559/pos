@@ -1029,6 +1029,17 @@ export default {
     change: "الباقي لك",
     onAccount: "على حسابك:",
   },
+  updates: {
+    ready: "الإصدار {version} جاهز.",
+    restartHint: "التثبيت يعيد تشغيل التطبيق، فاختر لحظة بين الزبائن.",
+    install: "تثبيت وإعادة التشغيل",
+    installing: "جارٍ التثبيت… {percent}%",
+    later: "لاحقاً",
+    about: "حول",
+    version: "الإصدار {version}",
+    check: "البحث عن تحديثات",
+    upToDate: "هذا أحدث إصدار.",
+  },
   alerts: {
     title: "التنبيهات",
     titleUnread: "التنبيهات، {n} جديدة",
