@@ -173,6 +173,8 @@ export const renderReceipt = async (
   if (sale.change) row(t("cash.change"), formatCurrency(sale.change));
   if (sale.refunded > 0) row(t("receipt.refunded"), `−${formatCurrency(sale.refunded)}`);
   if (sale.customer_balance) row(t("receipt.balanceOwed"), formatCurrency(sale.customer_balance), base, true);
+  if (sale.points_earned > 0) row(t("loyalty.earnedOnReceipt"), `+${sale.points_earned}`);
+  if (!opts.copy && sale.points_balance) row(t("loyalty.balanceOnReceipt"), String(sale.points_balance));
 
   // Barcode of the receipt number, whole dots per module so it scans
   const { bars, width } = code128Bars(sale.receipt_number);

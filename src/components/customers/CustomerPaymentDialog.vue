@@ -8,12 +8,16 @@ import type { Customer } from "@/db/customers";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
 import { formatCurrency } from "@/lib/format";
+import { usePayments } from "@/stores/payments";
 
 // A customer paying off (part of) their debt. Cash goes in the drawer.
 const open = defineModel<boolean>("open", { required: true });
 const props = defineProps<{ customer: Customer | null }>();
 const emit = defineEmits<{ paid: [balance: number] }>();
 
+// Card only when the shop takes cards
+const { cards } = usePayments();
+usePayments().load().catch(() => {});
 const amount = ref("");
 const method = ref<"cash" | "card">("cash");
 const note = ref("");
@@ -73,7 +77,7 @@ const submit = async () => {
           :aria-label="$t('customers.amount')"
           class="num h-16 w-full rounded-xl border-2 border-input bg-card px-4 text-center text-3xl font-semibold outline-none focus:border-primary"
         />
-        <div class="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1" role="radiogroup">
+        <div v-if="cards" class="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1" role="radiogroup">
           <button
             v-for="m in [{ id: 'cash', icon: Banknote }, { id: 'card', icon: CreditCard }] as const"
             :key="m.id"

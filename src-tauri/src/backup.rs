@@ -588,6 +588,10 @@ pub struct FolderArgs {
 /// Opens a folder dialog and stores the choice. Returns false if cancelled.
 #[tauri::command]
 pub async fn choose_backup_folder(app: AppHandle, args: FolderArgs) -> Result<bool> {
+    // Files on this computer feed the main computer's database: do it there
+    if crate::remote::client(&app).is_some() {
+        return Err(crate::error::Error::Rule("main_only"));
+    }
     let ctx = Ctx::from_app(&app).await?;
     let actor = auth::require(&ctx, "settings.system").await?;
     let dir = if args.reset {
@@ -630,6 +634,10 @@ pub struct Inspected {
 /// dialog was cancelled.
 #[tauri::command]
 pub async fn inspect_backup(app: AppHandle, args: InspectArgs) -> Result<Option<Inspected>> {
+    // Files on this computer feed the main computer's database: do it there
+    if crate::remote::client(&app).is_some() {
+        return Err(crate::error::Error::Rule("main_only"));
+    }
     let ctx = Ctx::from_app(&app).await?;
     auth::require(&ctx, "settings.system").await?;
     let path = match args.name {
@@ -671,6 +679,10 @@ pub struct RestoreArgs {
 /// Takes a safety backup, stages the chosen backup and restarts the app.
 #[tauri::command]
 pub async fn restore_backup(app: AppHandle, args: RestoreArgs) -> Result<()> {
+    // Files on this computer feed the main computer's database: do it there
+    if crate::remote::client(&app).is_some() {
+        return Err(crate::error::Error::Rule("main_only"));
+    }
     let ctx = Ctx::from_app(&app).await?;
     let actor = auth::require(&ctx, "settings.system").await?;
     let path = {

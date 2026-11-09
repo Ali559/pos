@@ -3,7 +3,7 @@
 import { select, selectOne } from "./client";
 import { toUtc, type Range } from "@/lib/dateRange";
 
-export type PaymentMethod = "cash" | "card" | "exchange" | "credit";
+export type PaymentMethod = "cash" | "card" | "exchange" | "credit" | "points";
 
 export type SaleStatus = "completed" | "partially_refunded" | "refunded" | "pending";
 
@@ -86,13 +86,16 @@ export interface SaleDetail {
   customer_id: number | null;
   customer_name: string | null;
   customer_balance: number | null;
+  /** Loyalty points the sale earned, and the customer's points now */
+  points_earned: number;
+  points_balance: number | null;
   lines: SaleLine[];
   returns: { id: number; return_date: string; total_refund: number; reason: string | null; user: string; method: string }[];
 }
 
 /** Positive payments, the paying method first; exchange credit and what was
  *  left on account after it */
-const PAYMENTS_ORDER = "ORDER BY payment_method IN ('exchange', 'credit'), id";
+const PAYMENTS_ORDER = "ORDER BY payment_method IN ('exchange', 'credit', 'points'), payment_method = 'card', id";
 
 export const getSale = async (id: number): Promise<SaleDetail | null> => {
   const head = await selectOne<Omit<SaleDetail, "lines" | "returns">>(
@@ -100,6 +103,8 @@ export const getSale = async (id: number): Promise<SaleDetail | null> => {
             s.customer_id, cu.name AS customer_name,
             CASE WHEN s.customer_id IS NULL THEN NULL
                  ELSE COALESCE((SELECT SUM(amount) FROM customer_ledger WHERE customer_id = s.customer_id), 0) END AS customer_balance,
+            COALESCE((SELECT SUM(points) FROM loyalty_ledger WHERE sale_id = s.id AND kind = 'earn'), 0) AS points_earned,
+            cu.loyalty_points AS points_balance,
             s.subtotal, COALESCE(s.discount_amount, 0) AS discount, COALESCE(s.tax_amount, 0) AS tax,
             s.total_amount AS total, s.payment_status AS status,
             pay.payment_method AS method, pay.tendered, pay.change_given AS change,

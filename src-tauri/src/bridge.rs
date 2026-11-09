@@ -99,7 +99,19 @@ async fn route(app: &AppHandle, req: Incoming) -> Result<Reply> {
             let name = &path["/invoke/".len()..];
             let v: Value = if req.body.is_empty() { Value::Null } else { serde_json::from_slice(&req.body)? };
             let args = v.get("args").cloned().unwrap_or(Value::Null);
-            Ok(json(200, &commands::dispatch(&ctx, name, args).await?))
+            // Commands outside commands.rs that need the app itself
+            let app = app.clone();
+            let out = match name {
+                "lan_status" => serde_json::to_value(crate::tills::lan_status(app).await?)?,
+                "set_lan_server" => serde_json::to_value(crate::tills::set_lan_server(app, serde_json::from_value(args)?).await?)?,
+                "new_pairing_code" => serde_json::to_value(crate::tills::new_pairing_code(app).await?)?,
+                "revoke_till" => serde_json::to_value(crate::tills::revoke_till(app, serde_json::from_value(args)?).await?)?,
+                "probe_main" => crate::tills::probe_main(serde_json::from_value(args)?).await?,
+                "get_device_setting" => serde_json::to_value(crate::device::get_device_setting(app, serde_json::from_value(args)?).await?)?,
+                "set_device_setting" => serde_json::to_value(crate::device::set_device_setting(app, serde_json::from_value(args)?).await?)?,
+                _ => commands::dispatch(&ctx, name, args).await?,
+            };
+            Ok(json(200, &out))
         }
         (Method::Get, path) if path.starts_with("/media/") => {
             let file = &path["/media/".len()..];

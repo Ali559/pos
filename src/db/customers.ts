@@ -16,6 +16,8 @@ export interface Customer {
   balance: number;
   /** Last sale, payment or adjustment */
   last_activity: string | null;
+  /** Loyalty points they can spend */
+  loyalty_points: number;
 }
 
 export type LedgerKind = "sale" | "payment" | "refund" | "adjustment";
@@ -36,7 +38,7 @@ export interface LedgerEntry {
 }
 
 const COLUMNS = `
-  c.id, c.name, c.phone, c.address, c.notes, c.credit_limit, c.is_active, c.price_level,
+  c.id, c.name, c.phone, c.address, c.notes, c.credit_limit, c.is_active, c.price_level, COALESCE(c.loyalty_points, 0) AS loyalty_points,
   COALESCE((SELECT SUM(amount) FROM customer_ledger l WHERE l.customer_id = c.id), 0) AS balance,
   (SELECT MAX(created_at) FROM customer_ledger l WHERE l.customer_id = c.id) AS last_activity`;
 

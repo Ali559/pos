@@ -42,6 +42,9 @@ pub enum Error {
     /// Same, naming the thing it's about (e.g. which product is short)
     #[error("{0}: {1}")]
     RuleAbout(&'static str, String),
+    /// An error the main computer returned to this till, passed on as is
+    #[error("{message}")]
+    Remote { code: String, message: String, detail: Option<String> },
 }
 
 impl Error {
@@ -53,6 +56,7 @@ impl Error {
             Error::BadCredentials => "bad_credentials",
             Error::NotFound => "not_found",
             Error::Rule(code) | Error::RuleAbout(code, _) => code,
+            Error::Remote { code, .. } => code,
             Error::Image(_) | Error::Blurhash => "bad_image",
             _ => "internal",
         }
@@ -66,6 +70,7 @@ impl Serialize for Error {
         s.serialize_field("message", &self.to_string())?;
         match self {
             Error::Forbidden(detail) | Error::RuleAbout(_, detail) => s.serialize_field("detail", detail)?,
+            Error::Remote { detail: Some(detail), .. } => s.serialize_field("detail", detail)?,
             _ => s.skip_field("detail")?,
         }
         s.end()

@@ -75,6 +75,13 @@ pub struct CheckoutArgs {
     /// Manager approval for a wholesale sale
     #[serde(default)]
     pub wholesale_override_token: Option<String>,
+    /// Loyalty points the customer spends on this sale
+    #[serde(default)]
+    pub points: i64,
+    /// A split payment: this much by card, the rest with `payment_method`
+    /// (cash). Needs card payments switched on.
+    #[serde(default)]
+    pub card_amount: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -95,6 +102,21 @@ pub struct SaleResult {
     pub on_account: f64,
     /// Taken off by promotions (part of `discount`)
     pub promotions: f64,
+    /// Paid by card in a split payment
+    pub card_amount: f64,
+    /// Loyalty: spent on this sale (and their value), earned by it, and the
+    /// customer's balance after it. None when the sale has no customer or
+    /// points are off.
+    pub points_used: i64,
+    pub points_value: f64,
+    pub points_earned: i64,
+    pub points_balance: Option<i64>,
+}
+
+/// Card payments are off unless the shop switches them on (Settings →
+/// Payments): most tills here only take cash.
+pub async fn card_payments(ctx: &Ctx) -> Result<bool> {
+    Ok(crate::settings::get(ctx, "card_payments", "0").await? == "1")
 }
 
 /// Dinar amounts have no useful fraction; other currencies keep cents.
@@ -159,11 +181,17 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
             return Err(Error::Rule("negative_amount"));
         }
     }
-    if !(args.cart_discount >= 0.0) || args.tendered.is_some_and(|t| !(t >= 0.0)) || !(args.on_account >= 0.0) {
+    if !(args.cart_discount >= 0.0) || args.tendered.is_some_and(|t| !(t >= 0.0)) || !(args.on_account >= 0.0) || !(args.card_amount >= 0.0) || args.points < 0 {
         return Err(Error::Rule("negative_amount"));
     }
-    if args.on_account > 0.0 && args.customer_id.is_none() {
+    if (args.on_account > 0.0 || args.points > 0) && args.customer_id.is_none() {
         return Err(Error::Rule("customer_required"));
+    }
+    if (args.payment_method == "card" || args.card_amount > 0.0) && !card_payments(ctx).await? {
+        return Err(Error::Rule("card_payments_off"));
+    }
+    if args.card_amount > 0.0 && args.payment_method != "cash" {
+        return Err(Error::Invalid("a split payment is cash plus card".into()));
     }
 
     let (tax_rate,): (f64,) = sqlx::query_as(
@@ -367,18 +395,40 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
             found.ok_or(Error::NotFound)?;
         }
     }
-    let due = total - credit - on_account;
+    // Points pay before money does
+    let loyalty = crate::loyalty::config(&mut tx).await?;
+    let (points_used, points_value) = if args.points > 0 {
+        let cfg = loyalty.as_ref().ok_or(Error::Rule("loyalty_off"))?;
+        let customer = args.customer_id.ok_or(Error::Rule("customer_required"))?;
+        if crate::loyalty::balance(&mut tx, customer).await? < args.points {
+            return Err(Error::Rule("not_enough_points"));
+        }
+        let value = round_money(args.points as f64 * cfg.point_value, &currency);
+        if value > total - credit - on_account + 1e-9 {
+            return Err(Error::Rule("points_too_many"));
+        }
+        (args.points, value)
+    } else {
+        (0, 0.0)
+    };
+    let due = total - credit - on_account - points_value;
+    let card_amount = round_money(args.card_amount, &currency);
+    if card_amount > due + 1e-9 {
+        return Err(Error::Rule("split_too_large"));
+    }
+    // With a split, the cash part is what's left after the card
+    let cash_due = due - card_amount;
     let (tendered, change) = match (args.payment_method.as_str(), args.tendered) {
-        ("cash", Some(t)) if due > 0.0 && t < due => return Err(Error::Rule("tendered_short")),
-        ("cash", Some(t)) if due > 0.0 => (Some(t), Some(round_money(t - due, &currency))),
+        ("cash", Some(t)) if cash_due > 0.0 && t < cash_due => return Err(Error::Rule("tendered_short")),
+        ("cash", Some(t)) if cash_due > 0.0 => (Some(t), Some(round_money(t - cash_due, &currency))),
         _ => (None, None),
     };
     let at = now();
 
     let placeholder = format!("tmp-{}", uuid::Uuid::new_v4());
     let id = sqlx::query(
-        "INSERT INTO sales (receipt_number, sale_date, user_id, shift_id, subtotal, discount_amount, tax_amount, total_amount, approved_by, customer_id, price_level, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $2)",
+        "INSERT INTO sales (receipt_number, sale_date, user_id, shift_id, subtotal, discount_amount, tax_amount, total_amount, approved_by, customer_id, price_level, till_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $2)",
     )
     .bind(&placeholder)
     .bind(&at)
@@ -391,6 +441,7 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     .bind(approved_by)
     .bind(args.customer_id)
     .bind(level)
+    .bind(ctx.till_id)
     .execute(&mut *tx)
     .await?
     .last_insert_rowid();
@@ -452,20 +503,55 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
         })
         .await?;
     }
-    if due > 0.0 || (exchange.is_none() && on_account == 0.0) {
+    if points_used > 0 {
+        let customer_id = args.customer_id.ok_or(Error::Rule("customer_required"))?;
+        sqlx::query("INSERT INTO payments (sale_id, payment_method, amount, reference_number, shift_id, payment_date) VALUES ($1, 'points', $2, $3, $4, $5)")
+            .bind(id)
+            .bind(points_value)
+            .bind(points_used.to_string())
+            .bind(shift_id)
+            .bind(&at)
+            .execute(&mut *tx)
+            .await?;
+        crate::loyalty::write(&mut tx, crate::loyalty::Change {
+            customer_id, kind: "redeem", points: -points_used, sale_id: Some(id), return_id: None, note: None, user_id: actor.user_id, at: &at,
+        })
+        .await?;
+    }
+    if card_amount > 0.0 {
+        sqlx::query("INSERT INTO payments (sale_id, payment_method, amount, shift_id, payment_date) VALUES ($1, 'card', $2, $3, $4)")
+            .bind(id)
+            .bind(card_amount)
+            .bind(shift_id)
+            .bind(&at)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if cash_due > 0.0 || (exchange.is_none() && on_account == 0.0 && points_used == 0 && card_amount == 0.0) {
         sqlx::query(
             "INSERT INTO payments (sale_id, payment_method, amount, tendered, change_given, shift_id, payment_date)
              VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(id)
         .bind(&args.payment_method)
-        .bind(due)
+        .bind(cash_due)
         .bind(tendered)
         .bind(change)
         .bind(shift_id)
         .bind(&at)
         .execute(&mut *tx)
         .await?;
+    }
+    // Money paid now (not on account, not points) earns points
+    let mut points_earned = 0;
+    let mut points_balance = None;
+    if let (Some(cfg), Some(customer_id)) = (&loyalty, args.customer_id) {
+        points_earned = crate::loyalty::earned(cfg, due);
+        crate::loyalty::write(&mut tx, crate::loyalty::Change {
+            customer_id, kind: "earn", points: points_earned, sale_id: Some(id), return_id: None, note: None, user_id: actor.user_id, at: &at,
+        })
+        .await?;
+        points_balance = Some(crate::loyalty::balance(&mut tx, customer_id).await?);
     }
     let mut refunded = 0.0;
     if let Some(pending) = &exchange {
@@ -484,6 +570,10 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
         .await?;
         let original = items_sale(&args);
         returns::pay_out(&mut tx, original, return_id, "exchange", credit, shift_id, &at).await?;
+        // Points the returned items earned go back with them
+        if let Some(sale_id) = original {
+            crate::loyalty::on_return(&mut tx, sale_id, return_id, pending.total, false, actor.user_id, &at).await?;
+        }
         refunded = returned - credit;
         returns::pay_out(&mut tx, original, return_id, &args.payment_method, refunded, shift_id, &at).await?;
     }
@@ -495,11 +585,14 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
         "sale",
         "sales",
         Some(id),
-        &serde_json::json!({ "total": total, "items": lines.len(), "discount": discount, "approvedBy": approved_by, "customer": args.customer_id, "onAccount": on_account }),
+        &serde_json::json!({ "receipt": receipt_number, "total": total, "items": lines.len(), "discount": discount, "approvedBy": approved_by, "customer": args.customer_id, "onAccount": on_account, "card": card_amount, "points": points_used }),
     )
     .await?;
     notifications::refresh_quietly(ctx).await;
-    Ok(SaleResult { id, receipt_number, subtotal, discount, tax, total, tendered, change, returned, refunded, on_account, promotions })
+    Ok(SaleResult {
+        id, receipt_number, subtotal, discount, tax, total, tendered, change, returned, refunded, on_account, promotions,
+        card_amount, points_used, points_value, points_earned, points_balance,
+    })
 }
 
 fn items_sale(args: &CheckoutArgs) -> Option<i64> {
@@ -595,6 +688,11 @@ pub mod tests {
         }
     }
 
+    /// Card payments are off by default
+    pub async fn cards_on(ctx: &Ctx) {
+        sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES ('card_payments', '1')").execute(&ctx.pool).await.unwrap();
+    }
+
     pub fn sell(product_id: i64, quantity: f64, method: &str) -> CheckoutArgs {
         CheckoutArgs {
             lines: vec![CheckoutLine { product_id, quantity, discount: 0.0, ..Default::default() }],
@@ -610,6 +708,8 @@ pub mod tests {
             over_limit_override_token: None,
             price_level: None,
             wholesale_override_token: None,
+            points: 0,
+            card_amount: 0.0,
         }
     }
 
@@ -636,6 +736,7 @@ pub mod tests {
         tauri::async_runtime::block_on(async {
             let ctx = test_support::ctx().await;
             setup_owner(&ctx).await;
+            crate::sales::tests::cards_on(&ctx).await;
 
             // A carton of 24 has its own barcode and price; stock counts cans
             let mut cola = product("Cola", "111", 30.0);
@@ -726,6 +827,7 @@ pub mod tests {
         tauri::async_runtime::block_on(async {
             let ctx = test_support::ctx().await;
             setup_owner(&ctx).await;
+            crate::sales::tests::cards_on(&ctx).await;
             crate::settings::set_setting(&ctx, crate::settings::SetSettingArgs { key: "tax_rate".into(), value: "10".into() }).await.unwrap();
             // Cola: 750 retail, 600 wholesale, 700 each from 6
             let mut cola = product("Cola", "1", 50.0);
@@ -822,6 +924,8 @@ pub mod tests {
                 over_limit_override_token: None,
                 price_level: None,
                 wholesale_override_token: None,
+                points: 0,
+                card_amount: 0.0,
             })
             .await
             .unwrap();
@@ -848,6 +952,7 @@ pub mod tests {
         tauri::async_runtime::block_on(async {
             let ctx = test_support::ctx().await;
             setup_owner(&ctx).await;
+            crate::sales::tests::cards_on(&ctx).await;
             let id = create_product(&ctx, product("Cola", "1", 2.0)).await.unwrap();
             let r = checkout(&ctx, sell(id, 3.0, "card")).await;
             assert!(matches!(r, Err(Error::RuleAbout("insufficient_stock", n)) if n == "Cola"));

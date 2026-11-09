@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import ShopForm from "@/components/shop/ShopForm.vue";
+import PairForm from "@/components/settings/PairForm.vue";
+import { MonitorSmartphone } from "lucide-vue-next";
 import AppIcon from "@/components/icons/AppIcon.vue";
 import { emptyShopProfile, type ShopType } from "@/db/shop";
 import { pickName, starterTemplates } from "@/data/starterCategories";
@@ -86,6 +88,16 @@ const call = (lang: Language, categories: unknown[], ownerArgs: unknown) =>
     <div class="mx-auto flex max-w-3xl flex-col p-6 sm:p-10">
       <h1 class="mt-4 text-3xl font-semibold tracking-tight">{{ $t("setup.title") }}</h1>
       <p class="mt-2 max-w-xl text-muted-foreground">{{ $t("setup.subtitle") }}</p>
+
+      <!-- A second till for a shop that's already set up on another computer -->
+      <details class="group mt-6 rounded-xl border bg-card p-4">
+        <summary class="flex cursor-pointer list-none items-center gap-2 font-medium">
+          <MonitorSmartphone :size="18" class="text-muted-foreground" />
+          {{ $t("tills.setupQuestion") }}
+        </summary>
+        <p class="mt-2 mb-4 text-sm text-muted-foreground">{{ $t("tills.setupHint") }}</p>
+        <PairForm />
+      </details>
 
       <form class="mt-10 space-y-6" @submit.prevent="submit">
         <!-- 1. Language: one per shop, fixed after setup -->

@@ -18,7 +18,7 @@ pub const MAX_DIMENSION: u32 = 1600;
 pub const MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
 const BLURHASH_COMPONENTS: (u32, u32) = (4, 3);
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, serde::Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaFile {
     pub id: i64,
@@ -257,8 +257,29 @@ pub async fn upload_media(app: AppHandle, request: tauri::ipc::Request<'_>) -> R
         .get("x-file-name")
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
+    // An extra till: photos are kept on the main computer
+    if let Some(remote) = crate::remote::client(&app) {
+        return Ok(serde_json::from_value(remote.upload(bytes.clone(), original_name).await?)?);
+    }
     let ctx = Ctx::from_app(&app).await?;
     upload(&ctx, bytes.clone(), original_name).await
+}
+
+/// Where the screen loads stored images from: this computer's media
+/// folder, or the main computer when this is an extra till.
+#[derive(Debug, serde::Serialize)]
+pub struct MediaBase {
+    pub dir: Option<String>,
+    pub url: Option<String>,
+    pub token: Option<String>,
+}
+
+#[tauri::command]
+pub fn media_base(app: AppHandle) -> Result<MediaBase> {
+    Ok(match crate::remote::client(&app) {
+        Some(c) => MediaBase { dir: None, url: Some(c.media_base()), token: Some(c.link.token.clone()) },
+        None => MediaBase { dir: Some(media_dir(&app)?.to_string_lossy().into_owned()), url: None, token: None },
+    })
 }
 
 #[cfg(test)]

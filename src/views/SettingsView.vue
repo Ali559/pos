@@ -16,6 +16,9 @@ import {
 } from "@/components/ui/select";
 import ShopForm from "@/components/shop/ShopForm.vue";
 import BackupsTab from "@/components/backup/BackupsTab.vue";
+import PaymentsTab from "@/components/settings/PaymentsTab.vue";
+import ActivityTab from "@/components/settings/ActivityTab.vue";
+import TillsTab from "@/components/settings/TillsTab.vue";
 import { useTheme } from "@/hooks/useTheme";
 import { useShop } from "@/stores/shop";
 import { useAuth } from "@/stores/auth";
@@ -36,6 +39,7 @@ const auth = useAuth();
 // The theme is per device, so anyone may change it; the rest is gated
 const canSystem = computed(() => auth.can("settings.system"));
 const canShop = computed(() => auth.can("settings.shop"));
+const canAudit = computed(() => auth.can("settings.audit"));
 // ?tab=backups opens a tab directly (e.g. from a backup alert)
 const route = useRoute();
 const activeTab = ref(typeof route.query.tab === "string" ? route.query.tab : "general");
@@ -239,7 +243,10 @@ onMounted(async () => {
       <TabsList class="mb-6">
         <TabsTrigger value="general">{{ $t("settings.tabs.general") }}</TabsTrigger>
         <TabsTrigger v-if="canShop" value="shop">{{ $t("settings.tabs.shop") }}</TabsTrigger>
+        <TabsTrigger v-if="canSystem" value="payments">{{ $t("settings.tabs.payments") }}</TabsTrigger>
         <TabsTrigger v-if="canSystem" value="backups">{{ $t("settings.tabs.backups") }}</TabsTrigger>
+        <TabsTrigger v-if="canSystem" value="tills">{{ $t("settings.tabs.tills") }}</TabsTrigger>
+        <TabsTrigger v-if="canAudit" value="activity">{{ $t("settings.tabs.activity") }}</TabsTrigger>
       </TabsList>
 
       <TabsContent value="general" class="space-y-5">
@@ -314,6 +321,7 @@ onMounted(async () => {
                 </div>
               </div>
               <p class="-mt-2 text-xs text-muted-foreground">{{ $t("settings.register.openingFloatHint") }}</p>
+              <p class="text-xs text-muted-foreground">{{ $t("settings.register.perComputer") }}</p>
               <fieldset class="space-y-2">
                 <legend class="text-sm font-medium">{{ $t("settings.register.printer") }}</legend>
                 <div class="flex flex-wrap items-center gap-2">
@@ -499,8 +507,17 @@ onMounted(async () => {
         </form>
       </TabsContent>
 
+      <TabsContent v-if="canSystem" value="payments">
+        <PaymentsTab />
+      </TabsContent>
       <TabsContent v-if="canSystem" value="backups">
         <BackupsTab />
+      </TabsContent>
+      <TabsContent v-if="canSystem" value="tills">
+        <TillsTab />
+      </TabsContent>
+      <TabsContent v-if="canAudit" value="activity">
+        <ActivityTab />
       </TabsContent>
     </Tabs>
   </div>

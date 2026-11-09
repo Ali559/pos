@@ -58,6 +58,11 @@ pub struct ReturnArgs {
 pub struct ReturnResult {
     pub id: i64,
     pub refund: f64,
+    /// Part of `refund` given back as loyalty points, and how many points
+    pub points_value: f64,
+    pub points_back: i64,
+    /// Points the sale had earned, taken back with the items
+    pub points_taken: i64,
 }
 
 /// One line ready to write: amounts already worked out.
@@ -311,6 +316,9 @@ pub async fn create_return(ctx: &Ctx, args: ReturnArgs) -> Result<ReturnResult> 
     if !matches!(args.refund_method.as_str(), "cash" | "card" | "credit") {
         return Err(Error::Invalid(format!("unknown refund method {}", args.refund_method)));
     }
+    if args.refund_method == "card" && !crate::sales::card_payments(ctx).await? {
+        return Err(Error::Rule("card_payments_off"));
+    }
     let currency = shop_currency(ctx).await?;
     let shift_id = shifts::shift_info(ctx, actor.user_id).await?.map(|s| s.id);
     let at = now();
@@ -327,12 +335,19 @@ pub async fn create_return(ctx: &Ctx, args: ReturnArgs) -> Result<ReturnResult> 
         None
     };
     let id = write(&mut tx, &pending, actor.user_id, shift_id, &args.refund_method, &at).await?;
-    pay_out(&mut tx, pending.sale_id, id, &args.refund_method, pending.total, shift_id, &at).await?;
-    if let Some(customer_id) = customer {
+    // Whatever loyalty points paid for goes back as points; the rest as money
+    let points = match pending.sale_id {
+        Some(sale_id) => Some(crate::loyalty::on_return(&mut tx, sale_id, id, pending.total, true, actor.user_id, &at).await?),
+        None => None,
+    };
+    let points_value = points.as_ref().map_or(0.0, |p| p.refund_value);
+    let money = pending.total - points_value;
+    pay_out(&mut tx, pending.sale_id, id, &args.refund_method, money, shift_id, &at).await?;
+    if let (Some(customer_id), true) = (customer, money > 0.0) {
         crate::customers::write_entry(&mut tx, crate::customers::Entry {
             customer_id,
             kind: "refund",
-            amount: -pending.total,
+            amount: -money,
             sale_id: pending.sale_id,
             return_id: Some(id),
             method: None,
@@ -351,11 +366,17 @@ pub async fn create_return(ctx: &Ctx, args: ReturnArgs) -> Result<ReturnResult> 
         "refund",
         "returns",
         Some(id),
-        &serde_json::json!({ "sale": pending.sale_id, "refund": pending.total, "approvedBy": pending.approved_by }),
+        &serde_json::json!({ "sale": pending.sale_id, "refund": pending.total, "method": args.refund_method, "approvedBy": pending.approved_by }),
     )
     .await?;
     notifications::refresh_quietly(ctx).await;
-    Ok(ReturnResult { id, refund: pending.total })
+    Ok(ReturnResult {
+        id,
+        refund: pending.total,
+        points_value,
+        points_back: points.as_ref().map_or(0, |p| p.refund_points),
+        points_taken: points.as_ref().map_or(0, |p| p.take_back),
+    })
 }
 
 #[cfg(test)]
@@ -457,6 +478,8 @@ mod tests {
                 over_limit_override_token: None,
                 price_level: None,
                 wholesale_override_token: None,
+                points: 0,
+                card_amount: 0.0,
             })
             .await
             .unwrap();
@@ -498,6 +521,7 @@ mod tests {
         tauri::async_runtime::block_on(async {
             let ctx = test_support::ctx().await;
             setup_owner(&ctx).await;
+            crate::sales::tests::cards_on(&ctx).await;
             crate::settings::set_setting(&ctx, crate::settings::SetSettingArgs { key: "opening_float".into(), value: "10000".into() })
                 .await
                 .unwrap();
@@ -581,6 +605,7 @@ mod tests {
         tauri::async_runtime::block_on(async {
             let ctx = test_support::ctx().await;
             setup_owner(&ctx).await;
+            crate::sales::tests::cards_on(&ctx).await;
             let cola = create_product(&ctx, product("Cola", "1", 10.0)).await.unwrap(); // 750
             let mut big = product("Juice", "2", 10.0);
             big.selling_price = 2000.0;

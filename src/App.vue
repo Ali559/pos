@@ -7,6 +7,8 @@ import LocaleProvider from "./components/providers/LocaleProvider.vue";
 import PrintRoot from "./components/sales/PrintRoot.vue";
 import StatementPrint from "./components/customers/StatementPrint.vue";
 import LabelsPrint from "./components/catalog/LabelsPrint.vue";
+import SlipPrint from "./components/sales/SlipPrint.vue";
+import ReportPrint from "./components/reports/ReportPrint.vue";
 
 // Full screen: on at start when the shop wants a kiosk-style till, F11 any time
 const toggleFullscreen = async (e: KeyboardEvent) => {
@@ -30,5 +32,7 @@ onUnmounted(() => window.removeEventListener("keydown", toggleFullscreen));
     <print-root />
     <statement-print />
     <labels-print />
+    <slip-print />
+    <report-print />
   </locale-provider>
 </template>

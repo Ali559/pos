@@ -408,6 +408,10 @@ pub struct OpenedFile {
 /// Opens a file dialog and reads the spreadsheet. None if cancelled.
 #[tauri::command]
 pub async fn open_import_file(app: AppHandle) -> Result<Option<OpenedFile>> {
+    // Files on this computer feed the main computer's database: do it there
+    if crate::remote::client(&app).is_some() {
+        return Err(crate::error::Error::Rule("main_only"));
+    }
     let ctx = Ctx::from_app(&app).await?;
     auth::require(&ctx, "inventory.edit").await?;
     let picked = app.dialog().file().add_filter("Spreadsheet", &["csv", "xlsx", "xls", "ods", "txt"]).blocking_pick_file();
@@ -438,6 +442,10 @@ pub struct ImportArgs {
 
 #[tauri::command]
 pub async fn import_products(app: AppHandle, args: ImportArgs) -> Result<ImportReport> {
+    // Files on this computer feed the main computer's database: do it there
+    if crate::remote::client(&app).is_some() {
+        return Err(crate::error::Error::Rule("main_only"));
+    }
     let ctx = Ctx::from_app(&app).await?;
     let rows = {
         let state = app.state::<ImportFile>();

@@ -80,6 +80,12 @@ const barcode = computed(() => (p.value ? code128Bars(p.value.sale.receipt_numbe
         <template v-if="p.sale.customer_balance">
           <dt class="pt-1 font-bold">{{ $t("receipt.balanceOwed") }}</dt><dd class="pt-1 text-end font-bold">{{ formatCurrency(p.sale.customer_balance) }}</dd>
         </template>
+        <template v-if="p.sale.points_earned > 0">
+          <dt>{{ $t("loyalty.earnedOnReceipt") }}</dt><dd class="text-end">+{{ p.sale.points_earned }}</dd>
+        </template>
+        <template v-if="!p.copy && p.sale.points_balance">
+          <dt>{{ $t("loyalty.balanceOnReceipt") }}</dt><dd class="text-end">{{ p.sale.points_balance }}</dd>
+        </template>
       </dl>
 
       <svg
