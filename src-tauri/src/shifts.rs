@@ -123,6 +123,17 @@ pub struct ShiftSummary {
     pub paid_to_suppliers: f64,
     /// What the drawer should hold now
     pub expected_cash: f64,
+    /// What the shift's sales came to (after discounts, with tax)
+    pub sales_total: f64,
+    /// Given by the cashier (or a manager) and taken off by promotions
+    pub discounts: f64,
+    pub promotions: f64,
+    pub tax: f64,
+    /// Paid with loyalty points (net of any given back)
+    pub points_paid: f64,
+    /// Returns recorded on this shift, and what they gave back in all
+    pub returns: i64,
+    pub returns_total: f64,
 }
 
 async fn summary_for(ctx: &Ctx, user_id: i64) -> Result<Option<ShiftSummary>> {
@@ -150,7 +161,36 @@ async fn summary_for(ctx: &Ctx, user_id: i64) -> Result<Option<ShiftSummary>> {
     .bind(shift.id)
     .fetch_one(&ctx.pool)
     .await?;
+    let (sales_total, discounts, promotions, tax): (f64, f64, f64, f64) = sqlx::query_as(
+        "SELECT CAST(COALESCE(SUM(s.total_amount), 0) AS REAL),
+                CAST(COALESCE(SUM(s.discount_amount), 0) AS REAL) - COALESCE((SELECT SUM(si.promo_discount) FROM sale_items si JOIN sales x ON x.id = si.sale_id WHERE x.shift_id = $1), 0),
+                CAST(COALESCE((SELECT SUM(si.promo_discount) FROM sale_items si JOIN sales x ON x.id = si.sale_id WHERE x.shift_id = $1), 0) AS REAL),
+                CAST(COALESCE(SUM(s.tax_amount), 0) AS REAL)
+         FROM sales s WHERE s.shift_id = $1",
+    )
+    .bind(shift.id)
+    .fetch_one(&ctx.pool)
+    .await?;
+    let (points_paid,): (f64,) = sqlx::query_as(
+        "SELECT CAST(COALESCE(SUM(p.amount), 0) AS REAL) FROM payments p
+         WHERE p.payment_method = 'points' AND (p.shift_id = $1 OR p.return_id IN (SELECT id FROM returns WHERE shift_id = $1))",
+    )
+    .bind(shift.id)
+    .fetch_one(&ctx.pool)
+    .await?;
+    let (returns, returns_total): (i64, f64) =
+        sqlx::query_as("SELECT COUNT(*), CAST(COALESCE(SUM(total_refund), 0) AS REAL) FROM returns WHERE shift_id = $1")
+            .bind(shift.id)
+            .fetch_one(&ctx.pool)
+            .await?;
     Ok(Some(ShiftSummary {
+        sales_total,
+        discounts,
+        promotions,
+        tax,
+        points_paid,
+        returns,
+        returns_total,
         shift_id: shift.id,
         clocked_in_at: shift.clocked_in_at,
         opening_float: float,

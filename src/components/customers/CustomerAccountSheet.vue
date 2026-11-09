@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { HandCoins, Pencil, Printer, SlidersHorizontal } from "lucide-vue-next";
+import { Gift, HandCoins, Pencil, Printer, SlidersHorizontal } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,8 @@ import { formatCurrency } from "@/lib/format";
 import { formatDateTime } from "@/lib/locale";
 import { printStatement } from "@/lib/print";
 import { useAuth } from "@/stores/auth";
+import { usePayments } from "@/stores/payments";
+import { select } from "@/db/client";
 
 // One customer's account: what they owe, every entry with the running
 // balance, and the actions on it.
@@ -61,6 +63,41 @@ const saveAdjust = async () => {
   }
 };
 
+// Loyalty points: the balance, recent changes, and changing them by hand
+const { loyalty, pointValue, load: loadPayments } = usePayments();
+loadPayments().catch(() => {});
+const points = ref<{ id: number; kind: string; points: number; note: string | null; created_at: string; receipt_number: string | null }[]>([]);
+watch(open, async (v) => {
+  if (!v || props.customerId === null) return;
+  points.value = await select<(typeof points.value)[number]>(
+    `SELECT l.id, l.kind, l.points, l.note, l.created_at, s.receipt_number
+     FROM loyalty_ledger l LEFT JOIN sales s ON s.id = l.sale_id
+     WHERE l.customer_id = $1 ORDER BY l.created_at DESC, l.id DESC LIMIT 20`,
+    [props.customerId],
+  ).catch(() => []);
+});
+const pointsAdjusting = ref(false);
+const pointsForm = ref({ points: "", note: "" });
+const pointsError = ref("");
+const savePoints = async () => {
+  if (!customer.value) return;
+  pointsError.value = "";
+  try {
+    await call("adjust_loyalty_points", { customerId: customer.value.id, points: Math.trunc(Number(pointsForm.value.points)), note: pointsForm.value.note });
+    pointsAdjusting.value = false;
+    pointsForm.value = { points: "", note: "" };
+    await changed();
+    open.value && (points.value = await select<(typeof points.value)[number]>(
+      `SELECT l.id, l.kind, l.points, l.note, l.created_at, s.receipt_number
+       FROM loyalty_ledger l LEFT JOIN sales s ON s.id = l.sale_id
+       WHERE l.customer_id = $1 ORDER BY l.created_at DESC, l.id DESC LIMIT 20`,
+      [customer.value.id],
+    ));
+  } catch (e) {
+    pointsError.value = errorMessage(e);
+  }
+};
+
 const signed = (n: number) => `${n > 0 ? "+" : "−"}${formatCurrency(Math.abs(n))}`;
 </script>
 
@@ -80,6 +117,40 @@ const signed = (n: number) => `${n > 0 ? "+" : "−"}${formatCurrency(Math.abs(n
           <Button v-if="auth.can('customers.edit')" type="button" variant="ghost" @click="adjusting = !adjusting"><SlidersHorizontal />{{ $t("customers.adjust") }}</Button>
           <Button v-if="auth.can('customers.edit')" type="button" variant="ghost" @click="emit('edit', customer)"><Pencil />{{ $t("settings.edit") }}</Button>
         </div>
+      </div>
+
+      <div v-if="loyalty" class="space-y-3 rounded-xl border p-4">
+        <div class="flex items-center gap-3">
+          <Gift :size="20" class="text-primary" />
+          <div class="flex-1">
+            <p class="text-sm text-muted-foreground">{{ $t("loyalty.title") }}</p>
+            <p class="num text-xl font-bold">
+              {{ $t("loyalty.pointsShort", { n: customer.loyalty_points }) }}
+              <span class="text-sm font-normal text-muted-foreground">≈ {{ formatCurrency(customer.loyalty_points * pointValue) }}</span>
+            </p>
+          </div>
+          <Button v-if="auth.can('customers.edit')" type="button" variant="ghost" size="sm" @click="pointsAdjusting = !pointsAdjusting">{{ $t("loyalty.adjust") }}</Button>
+        </div>
+        <div v-if="pointsAdjusting" class="space-y-2">
+          <div class="flex gap-2">
+            <Input v-model="pointsForm.points" type="number" step="1" dir="ltr" class="w-32" :placeholder="$t('loyalty.adjustPlaceholder')" :aria-label="$t('loyalty.adjustPlaceholder')" />
+            <Input v-model="pointsForm.note" dir="auto" :placeholder="$t('customers.reasonPlaceholder')" :aria-label="$t('customers.reason')" />
+          </div>
+          <p class="text-xs text-muted-foreground">{{ $t("loyalty.adjustHint") }}</p>
+          <p v-if="pointsError" role="alert" class="text-sm text-destructive">{{ pointsError }}</p>
+          <Button type="button" size="sm" :disabled="!Math.trunc(Number(pointsForm.points)) || !pointsForm.note.trim()" @click="savePoints">{{ $t("common.save") }}</Button>
+        </div>
+        <ol v-if="points.length" class="space-y-1 text-sm">
+          <li v-for="p in points" :key="p.id" class="flex justify-between gap-2">
+            <span class="text-muted-foreground">
+              {{ $t(`loyalty.kinds.${p.kind}`) }}
+              <span v-if="p.receipt_number" class="num" dir="ltr">{{ p.receipt_number }}</span>
+              <bdi v-if="p.note" class="italic"> · {{ p.note }}</bdi>
+              <span class="block text-xs">{{ formatDateTime(new Date(p.created_at)) }}</span>
+            </span>
+            <span class="num font-medium" :class="p.points > 0 ? 'text-success' : 'text-destructive'">{{ p.points > 0 ? "+" : "" }}{{ p.points }}</span>
+          </li>
+        </ol>
       </div>
 
       <div v-if="adjusting" class="space-y-3 rounded-xl border p-4">

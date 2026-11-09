@@ -66,6 +66,13 @@ pub struct Ctx {
     pub session: Arc<SessionState>,
     pub media_dir: PathBuf,
     pub notifier: Option<Notifier>,
+    /// The till a request came from, when this computer is the main one
+    /// serving others on the shop's network (None: this computer's own window)
+    pub till_id: Option<i64>,
+    /// This computer is an extra till: who is signed in is decided by the
+    /// main computer (see `remote.rs`). Only commands that must run here
+    /// (printing, device settings, files) run with a local Ctx then.
+    pub remote: Option<Arc<crate::remote::Client>>,
 }
 
 impl Ctx {
@@ -76,6 +83,21 @@ impl Ctx {
             session: app.state::<Arc<SessionState>>().inner().clone(),
             media_dir: media::media_dir(app)?,
             notifier: Some(os_notifier(app.clone())),
+            till_id: None,
+            remote: crate::remote::client(app),
+        })
+    }
+
+    /// A request from a paired till: its own sign-in session.
+    pub async fn for_till<R: Runtime>(app: &AppHandle<R>, till_id: i64, session: Arc<SessionState>) -> Result<Self> {
+        Ok(Self {
+            pool: db::pool(app).await?,
+            read_pool: app.state::<db::ReadPool>().0.clone(),
+            session,
+            media_dir: media::media_dir(app)?,
+            notifier: Some(os_notifier(app.clone())),
+            till_id: Some(till_id),
+            remote: None,
         })
     }
 }
@@ -120,6 +142,8 @@ pub mod test_support {
             session: Arc::new(SessionState::default()),
             media_dir,
             notifier: None,
+            till_id: None,
+            remote: None,
         }
     }
 
@@ -145,6 +169,8 @@ pub mod test_support {
             session: Arc::new(SessionState::default()),
             media_dir: dir,
             notifier: None,
+            till_id: None,
+            remote: None,
         }
     }
 }

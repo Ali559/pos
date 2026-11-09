@@ -278,4 +278,9 @@ textarea {
   #print-root .rule {
     border-top: 1px dashed #000;
   }
+  /* A4 reports (Save as PDF) need real margins */
+  #print-root.report-page {
+    padding: 12mm;
+    box-sizing: border-box;
+  }
 }

@@ -79,7 +79,7 @@ Built 2026-11-07 (migration `0011`, `src-tauri/src/customers.rs`, Customers scre
 | Customers screen | S | ✅ |
 | Attach a customer to a sale | S | ✅ |
 | Debt (قەرز) | M | ✅ |
-| Loyalty points | S | ⬜ later, if shops ask for it |
+| Loyalty points | S | ✅ (phase 14) |
 | IQD + USD | M | ⬜ later |
 
 **How it works**
@@ -177,6 +177,27 @@ Built 2026-11-07 (migration `0014`, `src/lib/customerDisplay.ts`, `src/component
 - Tauri's updater checks a JSON file at a URL you choose (e.g. a GitHub release of `Ali559/pos`), downloads the new version and checks its signature against a public key built into the app.
 - It needs: a signing key pair (the private key stays with you, never in the repo), the place releases are published, and building/publishing a release for each version.
 
+## 14. Reports, payments and several tills ✅
+
+Built 2026-11-09 (migration `0015`, `loyalty.rs`, `device.rs`, `server.rs`, `remote.rs`, `tills.rs`; Settings → Payments, Tills, Activity). Checked with Rust tests and in the browser preview on a test shop; the till server was driven over HTTP. What still needs real machines is in `TODO.md`.
+
+| Item | Size | Status |
+| --- | --- | --- |
+| Activity log screen | S | ✅ |
+| Card payments switch + split cash/card | S | ✅ |
+| Shift report and end-of-day (Z) report, printable | S | ✅ |
+| Analytics export to Excel and PDF | S | ✅ |
+| Loyalty points | M | ✅ |
+| Several tills on the shop's network | L | ✅ (no offline selling on extra tills) |
+
+**How it works**
+- **Activity** (`settings.audit`): `audit_log` rows carry an action code and JSON details; `src/lib/activity.ts` turns each into a sentence from `activity.actions.*` in the shop's language, naming the product, customer, receipt, etc. by its current name. Filters: dates, person, kind (`ACTIVITY_GROUPS` in `src/db/audit.ts`), text. Rows from an extra till show its name (`audit_log.till_id`).
+- **Cards** (`card_payments`, off for new shops; migration `0015` switches it on for a shop that has card payments already). Off: no Card button or F9, and Rust refuses card sales, card refunds and card repayments. On: the cash dialog has *Part by card*; checkout writes a card row and a cash row (`card_amount`). The app never talks to the card machine: the cashier records what the bank's terminal approved.
+- **Loyalty** (`loyalty_enabled`, on by default; `loyalty_earn_per` money per point, default 1,000; `loyalty_point_value`, default 10). A sale with a customer earns points on what was paid now in cash or card (not on account, not points). Points pay first, as a `points` payment. A return gives back what points paid as points first, and takes back the points the sale earned in proportion (never below zero). By-hand changes need `customers.edit` and a reason. `customers.loyalty_points` is the balance; `loyalty_ledger` the history.
+- **Reports**: the shift summary adds sales total, discounts, promotions, tax, returns and points. The end-of-shift dialog prints it (`printSlip`: the receipt printer, else the print dialog), optionally as the shift ends. *End of day* in Analytics (`src/db/reports.ts`) totals a day by payment method and by cashier, with each closed drawer's over/short.
+- **Exports**: every Analytics table exports as Excel (`save_xlsx`, numbers kept as numbers, right-to-left sheet in `ku`/`ar`), PDF (an A4 page, `ReportPrint.vue`, through the print dialog's *Save as PDF*, so Kurdish and Arabic are shaped as on screen) or CSV. Same permission and audit entry for all three.
+- **Several tills**: see ARCHITECTURE.md → *Several tills*. One computer is the main one (Settings → Tills → *Make this the main computer*, after the recommended specs); extra tills pair with its address and a six-digit code and then run every command on it. Receipt printer, paper width, auto-print and full screen are per computer (`device.rs`).
+
 ## Carried over from PLAN.md
 
 - ⬜ Native-speaker review of the `ku` and `ar` strings.
@@ -187,5 +208,5 @@ Built 2026-11-07 (migration `0014`, `src/lib/customerDisplay.ts`, `src/component
 
 - ~~**Currency:**~~ IQD only for now (decided 2026-11-07).
 - **Scale barcodes:** which scale does the shop use, and does it print weight or price in the barcode?
-- **Loyalty:** wanted, or is debt enough?
-- **Auto-update:** where will releases be hosted?
+- ~~**Loyalty:**~~ built, on by default, and a shop can switch it off (2026-11-09).
+- ~~**Auto-update:**~~ GitHub releases on `Ali559/pos` (decided 2026-11-07).

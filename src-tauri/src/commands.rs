@@ -7,36 +7,49 @@ use tauri::AppHandle;
 
 use crate::ctx::Ctx;
 use crate::error::{Error, Result};
-use crate::{auth, backup, catalog, customers, expenses, export, lookup, notifications, pricing, printing, query, returns, sales, scale, settings, shifts, staff, stock, stockcount, suppliers};
+use crate::{auth, backup, catalog, customers, expenses, export, lookup, loyalty, notifications, pricing, printing, query, returns, sales, scale, settings, shifts, staff, stock, stockcount, suppliers};
 
 macro_rules! commands {
     ($( $name:ident $( ($args:ty) )? -> $out:ty => $f:path; )*) => {
         $(
             #[tauri::command]
-            pub async fn $name(app: AppHandle $(, args: $args)?) -> Result<$out> {
-                let ctx = Ctx::from_app(&app).await?;
-                $f(&ctx $(, { let a: $args = args; a })?).await
+            pub async fn $name(app: AppHandle, args: Option<serde_json::Value>) -> Result<serde_json::Value> {
+                run(&app, stringify!($name), args.unwrap_or(serde_json::Value::Null)).await
             }
         )*
 
         #[cfg(test)]
         pub const NAMES: &[&str] = &[$(stringify!($name)),*];
 
-        // Only the dev bridge calls this, and it's compiled out of release builds
+        /// Runs a command by name on this computer's database. The app
+        /// window (through `run`), the dev bridge and the main computer's
+        /// till server all come through here.
         #[allow(unused_variables)]
-        #[cfg_attr(not(debug_assertions), allow(dead_code))]
         pub async fn dispatch(ctx: &Ctx, name: &str, args: serde_json::Value) -> Result<serde_json::Value> {
             match name {
                 $(
                     stringify!($name) => {
                         $( let a: $args = serde_json::from_value(args)?; )?
-                        Ok(serde_json::to_value($f(ctx $(, { let _: Option<$args> = None; a })?).await?)?)
+                        let out: $out = $f(ctx $(, { let _: Option<$args> = None; a })?).await?;
+                        Ok(serde_json::to_value(out)?)
                     }
                 )*
                 _ => Err(Error::Invalid(format!("unknown command {name}"))),
             }
         }
     };
+}
+
+/// On an extra till everything but printing goes to the main computer;
+/// otherwise it runs here.
+pub async fn run(app: &AppHandle, name: &str, args: serde_json::Value) -> Result<serde_json::Value> {
+    if let Some(remote) = crate::remote::client(app) {
+        if !crate::remote::LOCAL.contains(&name) {
+            return remote.invoke(name, args).await;
+        }
+    }
+    let ctx = Ctx::from_app(app).await?;
+    dispatch(&ctx, name, args).await
 }
 
 commands! {
@@ -53,6 +66,7 @@ commands! {
     list_printers -> Vec<printing::PrinterInfo> => printing::list_printers;
     print_raster (printing::RasterArgs) -> () => printing::print_raster;
     authorize_override (auth::OverrideArgs) -> auth::OverrideGrant => auth::authorize_override;
+    whoami -> auth::Actor => auth::whoami;
 
     set_setting (settings::SetSettingArgs) -> () => settings::set_setting;
     save_shop_profile (settings::SaveShopArgs) -> () => settings::save_shop_profile;
@@ -96,6 +110,7 @@ commands! {
     delete_expense (expenses::IdArgs) -> () => expenses::delete_expense;
 
     authorize_export -> () => export::authorize_export;
+    record_export (export::RecordExportArgs) -> () => export::record_export;
     lookup_barcode (lookup::LookupArgs) -> lookup::Lookup => lookup::lookup_barcode;
     resolve_scan (scale::ScanArgs) -> Option<scale::ScanResult> => scale::resolve_scan;
 
@@ -103,6 +118,7 @@ commands! {
     update_customer (customers::UpdateCustomerArgs) -> () => customers::update_customer;
     record_customer_payment (customers::PaymentArgs) -> customers::PaymentResult => customers::record_customer_payment;
     adjust_customer_balance (customers::AdjustArgs) -> f64 => customers::adjust_customer_balance;
+    adjust_loyalty_points (loyalty::AdjustPointsArgs) -> i64 => loyalty::adjust_loyalty_points;
 
     create_supplier (suppliers::SupplierInput) -> i64 => suppliers::create_supplier;
     update_supplier (suppliers::UpdateSupplierArgs) -> () => suppliers::update_supplier;

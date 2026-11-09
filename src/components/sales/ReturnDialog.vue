@@ -15,6 +15,7 @@ import { errorMessage } from "@/lib/errors";
 import { formatCurrency } from "@/lib/format";
 import { useAuth } from "@/stores/auth";
 import { useShop } from "@/stores/shop";
+import { usePayments } from "@/stores/payments";
 
 // Pick what comes back and how many; Rust works out the refund from the
 // sale as it was charged (discounts and tax included).
@@ -29,7 +30,16 @@ const rows = ref<{ id: number; qty: number; restock: boolean }[]>([]);
 const reason = ref("");
 const method = ref<"cash" | "card" | "credit">("cash");
 // A sale with a customer can be refunded onto their account (less debt)
-const methods = computed(() => (props.sale.customer_id ? (["cash", "card", "credit"] as const) : (["cash", "card"] as const)));
+// Card only when the shop takes cards
+const { cards } = usePayments();
+usePayments().load().catch(() => {});
+const methods = computed(() => [
+  "cash" as const,
+  ...(cards.value ? (["card"] as const) : []),
+  ...(props.sale.customer_id ? (["credit"] as const) : []),
+]);
+// Whatever loyalty points paid is given back as points first
+const pointsPaid = computed(() => props.sale.payments.filter((p) => p.method === "points").reduce((n, p) => n + p.amount, 0));
 const busy = ref(false);
 const error = ref("");
 
@@ -37,7 +47,7 @@ watch(open, (isOpen) => {
   if (!isOpen) return;
   rows.value = props.sale.lines.map((l) => ({ id: l.id, qty: 0, restock: true }));
   reason.value = "";
-  method.value = props.sale.method === "card" ? "card" : props.sale.method === "credit" ? "credit" : "cash";
+  method.value = props.sale.method === "card" && cards.value ? "card" : props.sale.method === "credit" ? "credit" : "cash";
   error.value = "";
 });
 
@@ -163,7 +173,7 @@ const submit = async () => {
           </div>
           <div class="space-y-2">
             <Label>{{ $t("returns.refundBy") }}</Label>
-            <div class="grid gap-1 rounded-lg bg-muted p-1" :class="methods.length === 3 ? 'grid-cols-3' : 'grid-cols-2'" role="radiogroup">
+            <div class="grid gap-1 rounded-lg bg-muted p-1" :style="{ gridTemplateColumns: `repeat(${methods.length}, minmax(0, 1fr))` }" role="radiogroup">
               <button
                 v-for="m in methods"
                 :key="m"
@@ -184,6 +194,7 @@ const submit = async () => {
           <p>
             <span class="block text-sm text-muted-foreground">{{ $t("returns.refund") }}</span>
             <span class="num text-2xl font-bold">{{ formatCurrency(refund) }}</span>
+            <span v-if="pointsPaid > 0" class="block text-xs text-muted-foreground">{{ $t("loyalty.refundPointsFirst") }}</span>
           </p>
           <div class="flex gap-2">
             <Button type="button" size="lg" variant="outline" :disabled="!any || busy" @click="exchange">

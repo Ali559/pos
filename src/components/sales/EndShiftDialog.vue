@@ -10,28 +10,13 @@ import { errorMessage } from "@/lib/errors";
 import { formatCurrency } from "@/lib/format";
 import { formatTime } from "@/lib/locale";
 import { useAuth } from "@/stores/auth";
+import { Printer } from "lucide-vue-next";
+import { printSlip } from "@/lib/slip";
+import { shiftSlip, type ShiftSummary } from "@/lib/reportSlips";
 
 // Before clocking out: what the shift took, what the drawer should hold,
-// and the cashier's count. The difference is saved with the drawer.
-interface ShiftSummary {
-  shiftId: number;
-  clockedInAt: string;
-  openingFloat: number;
-  sales: number;
-  cashSales: number;
-  cardSales: number;
-  cashRefunds: number;
-  cardRefunds: number;
-  /** Customers paying off debt */
-  debtPaidCash: number;
-  debtPaidCard: number;
-  /** Sold on account (no money taken) */
-  onAccount: number;
-  /** Negative: cash taken from the till for suppliers */
-  paidToSuppliers: number;
-  expectedCash: number;
-}
-
+// and the cashier's count. The difference is saved with the drawer, and
+// the shift report can be printed (before, or as the shift ends).
 const open = defineModel<boolean>("open", { required: true });
 const emit = defineEmits<{ ended: [] }>();
 const auth = useAuth();
@@ -40,6 +25,7 @@ const summary = ref<ShiftSummary | null>(null);
 const counted = ref("");
 const note = ref("");
 const busy = ref(false);
+const printAtEnd = ref(true);
 const error = ref("");
 
 watch(open, async (isOpen) => {
@@ -59,11 +45,24 @@ const difference = computed(() =>
   counted.value === "" || !summary.value ? null : Number(counted.value) - summary.value.expectedCash,
 );
 
+const countedValue = () => (counted.value === "" ? null : Number(counted.value));
+const printReport = async () => {
+  if (!summary.value) return;
+  error.value = "";
+  try {
+    await printSlip(shiftSlip(summary.value, auth.user.value?.fullName ?? "", countedValue()));
+  } catch (e) {
+    error.value = errorMessage(e);
+  }
+};
+
 const submit = async () => {
   busy.value = true;
   error.value = "";
   try {
-    await auth.endShift({ countedCash: counted.value === "" ? null : Number(counted.value), note: note.value || null });
+    // Printed first: the summary is gone once the shift has ended
+    if (printAtEnd.value) await printReport();
+    await auth.endShift({ countedCash: countedValue(), note: note.value || null });
     open.value = false;
     emit("ended");
   } catch (e) {
@@ -94,6 +93,13 @@ const submit = async () => {
           <div class="flex justify-between border-t pt-2 font-semibold"><dt>{{ $t("shiftEnd.expected") }}</dt><dd class="num">{{ formatCurrency(summary.expectedCash) }}</dd></div>
           <div class="flex justify-between pt-1 text-muted-foreground"><dt>{{ $t("shiftEnd.cardSales") }}</dt><dd class="num">{{ formatCurrency(summary.cardSales + summary.cardRefunds + summary.debtPaidCard) }}</dd></div>
           <div v-if="summary.onAccount" class="flex justify-between text-muted-foreground"><dt>{{ $t("shiftEnd.onAccount") }}</dt><dd class="num">{{ formatCurrency(summary.onAccount) }}</dd></div>
+          <div v-if="summary.pointsPaid" class="flex justify-between text-muted-foreground"><dt>{{ $t("reports.pointsPaid") }}</dt><dd class="num">{{ formatCurrency(summary.pointsPaid) }}</dd></div>
+          <div class="mt-1 space-y-1 border-t pt-2 text-muted-foreground">
+            <div class="flex justify-between"><dt>{{ $t("reports.salesTotal") }}</dt><dd class="num">{{ formatCurrency(summary.salesTotal) }}</dd></div>
+            <div v-if="summary.discounts" class="flex justify-between"><dt>{{ $t("reports.discounts") }}</dt><dd class="num">−{{ formatCurrency(summary.discounts) }}</dd></div>
+            <div v-if="summary.promotions" class="flex justify-between"><dt>{{ $t("reports.promotions") }}</dt><dd class="num">−{{ formatCurrency(summary.promotions) }}</dd></div>
+            <div v-if="summary.returns" class="flex justify-between"><dt>{{ $t("reports.returns", { n: summary.returns }) }}</dt><dd class="num">−{{ formatCurrency(summary.returnsTotal) }}</dd></div>
+          </div>
         </dl>
 
         <div v-if="summary" class="space-y-2">
@@ -112,8 +118,13 @@ const submit = async () => {
           <Input id="shift-note" v-model="note" dir="auto" />
         </div>
 
+        <label v-if="summary" class="flex items-center gap-2 text-sm">
+          <input v-model="printAtEnd" type="checkbox" class="size-4 accent-primary" />
+          {{ $t("reports.printAtEnd") }}
+        </label>
         <p v-if="error" role="alert" class="text-sm font-medium text-destructive">{{ error }}</p>
         <div class="flex justify-end gap-2">
+          <Button v-if="summary" type="button" variant="outline" class="me-auto" @click="printReport"><Printer /> {{ $t("reports.print") }}</Button>
           <Button type="button" variant="ghost" @click="open = false">{{ $t("common.cancel") }}</Button>
           <Button type="submit" variant="destructive" :disabled="busy">
             <Loader2 v-if="busy" class="animate-spin" />

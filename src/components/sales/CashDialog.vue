@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { Banknote } from "lucide-vue-next";
+import { Banknote, CreditCard } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { formatCurrency } from "@/lib/format";
 import { useShop } from "@/stores/shop";
 
 // Cash handed over → change due. Quick buttons are the notes in use for
-// the shop's currency; typing works too. `ask` resolves with the amount
-// tendered, or null if cancelled.
+// the shop's currency; typing works too. With card payments on, part can go
+// on a card (a split payment) and the cash covers the rest. `ask` resolves
+// with the cash tendered and the card part, or null if cancelled.
 const NOTES: Record<string, number[]> = {
   IQD: [250, 500, 1000, 5000, 10000, 25000, 50000],
   USD: [1, 5, 10, 20, 50, 100],
@@ -16,19 +17,30 @@ const NOTES: Record<string, number[]> = {
 
 const { currency } = useShop();
 const open = ref(false);
-const total = ref(0);
+const due = ref(0);
 const tendered = ref("");
+const card = ref("");
+const splitAllowed = ref(false);
+const splitting = ref(false);
 const input = ref<HTMLInputElement | null>(null);
-let settle: ((n: number | null) => void) | null = null;
+type Answer = { tendered: number; card: number };
+let settle: ((a: Answer | null) => void) | null = null;
 
-const ask = (amount: number) =>
-  new Promise<number | null>((resolve) => {
+const ask = (amount: number, opts: { split?: boolean } = {}) =>
+  new Promise<Answer | null>((resolve) => {
     settle?.(null);
     settle = resolve;
-    total.value = amount;
+    due.value = amount;
     tendered.value = "";
+    card.value = "";
+    splitAllowed.value = !!opts.split;
+    splitting.value = false;
     open.value = true;
   });
+
+const cardPart = computed(() => (splitting.value ? Math.min(due.value, Math.max(0, Number(card.value) || 0)) : 0));
+// What's left to pay in cash
+const total = computed(() => due.value - cardPart.value);
 
 const notes = computed(() => (NOTES[currency.value] ?? NOTES.USD!).filter((n) => n * 2 > total.value || n >= total.value / 10));
 const given = computed(() => Number(tendered.value) || 0);
@@ -42,7 +54,7 @@ const add = (n: number) => {
 };
 
 const finish = (n: number | null) => {
-  settle?.(n);
+  settle?.(n === null ? null : { tendered: n, card: cardPart.value });
   settle = null;
   open.value = false;
 };
@@ -60,6 +72,29 @@ defineExpose({ ask });
             <DialogTitle class="font-semibold">{{ $t("cash.title") }}</DialogTitle>
             <DialogDescription class="text-sm text-muted-foreground">{{ $t("cash.due", { amount: formatCurrency(total) }) }}</DialogDescription>
           </div>
+        </div>
+        <div v-if="splitAllowed" class="space-y-2">
+          <label class="flex items-center gap-2 text-sm font-medium">
+            <input v-model="splitting" type="checkbox" class="size-4 accent-primary" />
+            <CreditCard :size="16" class="text-muted-foreground" />
+            {{ $t("cash.splitCard") }}
+          </label>
+          <div v-if="splitting" class="flex items-center gap-2">
+            <input
+              v-model="card"
+              type="number"
+              min="0"
+              :max="due"
+              step="any"
+              dir="ltr"
+              :aria-label="$t('cash.cardPart')"
+              :placeholder="$t('cash.cardPart')"
+              class="num h-11 w-full rounded-lg border border-input bg-card px-3 text-lg outline-none focus:border-primary"
+            />
+          </div>
+          <p v-if="splitting && cardPart > 0" class="text-xs text-muted-foreground">
+            {{ $t("cash.splitSummary", { card: formatCurrency(cardPart), cash: formatCurrency(total) }) }}
+          </p>
         </div>
         <input
           ref="input"

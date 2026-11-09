@@ -17,6 +17,7 @@ import {
   ChevronRight,
   Star,
   CreditCard,
+  Gift,
   History,
   Loader2,
   Minus,
@@ -52,6 +53,7 @@ import type { ScanResult } from "@/lib/scan";
 import { getSetting } from "@/db/settings";
 import { printReceipt } from "@/lib/print";
 import { useAuth } from "@/stores/auth";
+import { usePayments } from "@/stores/payments";
 import {
   getProductById,
   isWeighed,
@@ -82,14 +84,23 @@ interface SaleResult {
   /** Left on the customer's account */
   onAccount: number;
   tendered: number | null;
+  /** Split payment: the card part */
+  cardAmount: number;
+  /** Loyalty points spent (and their value), earned, and the balance after */
+  pointsUsed: number;
+  pointsValue: number;
+  pointsEarned: number;
+  pointsBalance: number | null;
 }
 
 /** What the done panel shows: a sale (maybe an exchange) or a plain refund */
-type Done = { kind: "sale"; sale: SaleResult } | { kind: "refund"; amount: number };
+type Done = { kind: "sale"; sale: SaleResult } | { kind: "refund"; amount: number; pointsBack: number };
 
 const { t } = useI18n();
 const { taxRate, currency, load: loadShop, profile } = useShop();
 const auth = useAuth();
+// Card payments only when the shop takes cards; loyalty points unless off
+const { cards: cardsOn, loyalty: loyaltyOn, pointValue, load: loadPayments } = usePayments();
 const pinDialog = ref<InstanceType<typeof ManagerPinDialog> | null>(null);
 const discountDialog = ref<InstanceType<typeof DiscountDialog> | null>(null);
 const cashDialog = ref<InstanceType<typeof CashDialog> | null>(null);
@@ -213,6 +224,18 @@ const returnValue = computed(() => returns.total(currency.value));
 // What the customer pays (positive) or gets back (negative)
 const net = computed(() => (cartItems.value.length ? total.value : 0) - returnValue.value);
 const nothingToCharge = computed(() => !cartItems.value.length && !returns.active.value);
+
+// Loyalty: the customer's points can pay for part or all of the sale
+const usePoints = ref(false);
+const pointsUsable = computed(() => {
+  const c = customer.value;
+  if (!loyaltyOn.value || !c || !cartItems.value.length || net.value <= 0 || pointValue.value <= 0) return 0;
+  return Math.max(0, Math.min(c.loyalty_points, Math.floor((net.value + 1e-6) / pointValue.value)));
+});
+const pointsToUse = computed(() => (usePoints.value ? pointsUsable.value : 0));
+const pointsValue = computed(() => roundMoney(pointsToUse.value * pointValue.value));
+// What's left to pay with money
+const dueNow = computed(() => net.value - pointsValue.value);
 
 // Methods
 const focusScan = () => nextTick(() => scanInput.value?.focus());
@@ -428,6 +451,7 @@ const resetCart = () => {
   cartItems.value = [];
   cartDiscount.value = 0;
   customer.value = null;
+  usePoints.value = false;
   priceLevel.value = "retail";
   if (payment.value === "account") payment.value = "cash";
   focusScan();
@@ -494,22 +518,27 @@ const checkout = async () => {
   if (!cartItems.value.length) return refund();
 
   let tendered: number | null = null;
+  let cardAmount = 0;
   let onAccount = 0;
   let overLimitOverrideToken: string | null | undefined = null;
+  const points = pointsToUse.value;
+  if (payment.value === "card" && !cardsOn.value) payment.value = "cash";
   if (payment.value === "account") {
     // Part paid in cash now (maybe nothing), the rest on the customer's account
-    if (!customer.value || net.value <= 0) return;
-    const paidNow = await onAccountDialog.value?.ask({ due: net.value, customer: customer.value });
+    if (!customer.value || dueNow.value <= 0) return;
+    const paidNow = await onAccountDialog.value?.ask({ due: dueNow.value, customer: customer.value });
     if (paidNow == null) return focusScan();
-    onAccount = net.value - paidNow;
+    onAccount = dueNow.value - paidNow;
     const limit = customer.value.credit_limit;
     if (limit != null && customer.value.balance + onAccount > limit + 1e-6) {
       overLimitOverrideToken = await approve("customers.over_limit");
       if (overLimitOverrideToken === undefined) return focusScan();
     }
-  } else if (payment.value === "cash" && net.value > 0) {
-    tendered = (await cashDialog.value?.ask(net.value)) ?? null;
-    if (tendered === null) return focusScan();
+  } else if (payment.value === "cash" && dueNow.value > 0) {
+    const paid = (await cashDialog.value?.ask(dueNow.value, { split: cardsOn.value })) ?? null;
+    if (paid === null) return focusScan();
+    tendered = paid.tendered;
+    cardAmount = paid.card;
   }
   // Promotions need no approval; discounts someone gives do
   const overrideToken = priced.value.manual > 0 ? await approve("sales.discount") : null;
@@ -544,12 +573,15 @@ const checkout = async () => {
       openPriceOverrideToken,
       priceLevel: priceLevel.value,
       wholesaleOverrideToken,
+      points,
+      cardAmount,
     });
     lastSale.value = { kind: "sale", sale };
+    usePoints.value = false;
     resetCart();
     returns.clear();
     returnMode.value = false;
-    const tookCash = payment.value === "cash" || (payment.value === "account" && sale.total - sale.returned > sale.onAccount);
+    const tookCash = (payment.value === "cash" && sale.total - sale.returned - sale.pointsValue > sale.cardAmount) || (payment.value === "account" && sale.total - sale.returned - sale.pointsValue > sale.onAccount);
     if (autoPrint.value) print(sale.id, tookCash);
     await reloadProducts();
   } catch (e) {
@@ -564,12 +596,12 @@ const refund = async () => {
   if (overrideToken === undefined) return focusScan();
   charging.value = true;
   try {
-    const r = await call<{ id: number; refund: number }>("create_return", {
+    const r = await call<{ id: number; refund: number; pointsValue: number; pointsBack: number }>("create_return", {
       ...returns.payload(),
-      refundMethod: payment.value === "account" ? "cash" : payment.value,
+      refundMethod: payment.value === "account" || (payment.value === "card" && !cardsOn.value) ? "cash" : payment.value,
       overrideToken,
     });
-    lastSale.value = { kind: "refund", amount: r.refund };
+    lastSale.value = { kind: "refund", amount: r.refund - r.pointsValue, pointsBack: r.pointsBack };
     returns.clear();
     returnMode.value = false;
     await reloadProducts();
@@ -639,6 +671,7 @@ const typingInField = (el: Element | null) =>
 
 const pay = (method: "cash" | "card" | "account") => {
   if (method === "account" && !(customer.value && canAccount.value)) return;
+  if (method === "card" && !cardsOn.value) return;
   payment.value = method;
   checkout();
 };
@@ -725,6 +758,7 @@ onMounted(async () => {
     loadShop(),
     getSetting("auto_print"),
     runningPromotions().catch(() => []),
+    loadPayments().catch(() => {}),
   ]);
   promos.value = running;
   const logo = profile.value?.logo;
@@ -983,7 +1017,10 @@ onMounted(async () => {
             <UserRound :size="15" class="shrink-0 text-muted-foreground" />
             <bdi class="min-w-0 flex-1 truncate font-medium">{{ customer.name }}</bdi>
             <span v-if="customer.balance > 0" class="num text-xs font-semibold text-destructive">{{ $t("customers.owes", { amount: formatCurrency(customer.balance) }) }}</span>
-            <button type="button" class="rounded p-0.5 text-muted-foreground hover:bg-card hover:text-foreground" :aria-label="$t('customers.remove')" @click="customer = null; payment === 'account' && (payment = 'cash')">
+            <span v-if="loyaltyOn && customer.loyalty_points > 0" class="num flex items-center gap-1 text-xs font-medium text-primary">
+              <Gift :size="13" />{{ $t("loyalty.pointsShort", { n: customer.loyalty_points }) }}
+            </span>
+            <button type="button" class="rounded p-0.5 text-muted-foreground hover:bg-card hover:text-foreground" :aria-label="$t('customers.remove')" @click="customer = null; usePoints = false; payment === 'account' && (payment = 'cash')">
               <X :size="14" />
             </button>
           </div>
@@ -1053,6 +1090,12 @@ onMounted(async () => {
                 {{ $t("returnCart.payBack") }}
                 <span class="num block text-3xl font-bold">{{ formatCurrency(lastSale.sale.refunded) }}</span>
               </span>
+              <span v-if="lastSale.sale.pointsUsed" class="text-sm text-muted-foreground">
+                {{ $t("loyalty.spent", { n: lastSale.sale.pointsUsed, amount: formatCurrency(lastSale.sale.pointsValue) }) }}
+              </span>
+              <span v-if="lastSale.sale.pointsEarned" class="flex items-center gap-1 text-sm font-medium text-primary">
+                <Gift :size="14" />{{ $t("loyalty.earned", { n: lastSale.sale.pointsEarned, balance: lastSale.sale.pointsBalance ?? 0 }) }}
+              </span>
               <Button variant="outline" size="sm" class="mt-2" @click="print(lastSale.sale.id)">
                 <Printer /> {{ $t("receipt.print") }}
               </Button>
@@ -1063,6 +1106,7 @@ onMounted(async () => {
                 {{ $t("returnCart.payBack") }}
                 <span class="num block text-3xl font-bold">{{ formatCurrency(lastSale.amount) }}</span>
               </span>
+              <span v-if="lastSale.pointsBack" class="text-sm text-primary">{{ $t("loyalty.pointsBack", { n: lastSale.pointsBack }) }}</span>
             </template>
           </li>
           <li
@@ -1195,12 +1239,25 @@ onMounted(async () => {
         </dl>
       </div>
 
-      <fieldset class="grid gap-2" :class="customer && canAccount ? 'grid-cols-3' : 'grid-cols-2'">
+      <label
+        v-if="pointsUsable > 0"
+        class="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-primary/40 bg-primary/5 px-3 py-2 text-sm"
+      >
+        <input v-model="usePoints" type="checkbox" class="size-4 accent-primary" />
+        <Gift :size="16" class="text-primary" />
+        <span class="flex-1">{{ $t("loyalty.usePoints", { n: pointsUsable }) }}</span>
+        <span class="num font-semibold text-primary">−{{ formatCurrency(roundMoney(pointsUsable * pointValue)) }}</span>
+      </label>
+      <p v-if="usePoints && pointsValue > 0" class="-mt-1 flex justify-between text-sm">
+        <span class="text-muted-foreground">{{ $t("loyalty.leftToPay") }}</span>
+        <span class="num font-semibold">{{ formatCurrency(dueNow) }}</span>
+      </p>
+      <fieldset class="grid gap-2" :style="{ gridTemplateColumns: `repeat(${1 + (cardsOn ? 1 : 0) + (customer && canAccount ? 1 : 0)}, minmax(0, 1fr))` }">
         <legend class="sr-only">{{ $t("pos.payWith") }}</legend>
         <label
           v-for="m in [
             { id: 'cash', icon: Banknote },
-            { id: 'card', icon: CreditCard },
+            ...(cardsOn ? [{ id: 'card', icon: CreditCard }] : []),
             ...(customer && canAccount ? [{ id: 'account', icon: NotebookPen }] : []),
           ] as const"
           :key="m.id"
@@ -1234,7 +1291,7 @@ onMounted(async () => {
           {{ net < 0 ? $t("returnCart.refund") : $t("pos.charge") }}
           <kbd class="kbd">F12</kbd>
         </span>
-        <span>{{ formatCurrency(Math.abs(net)) }}</span>
+        <span>{{ formatCurrency(Math.abs(dueNow)) }}</span>
       </Button>
 
       <div class="grid grid-cols-[1fr_auto_1fr] gap-2">
@@ -1274,7 +1331,7 @@ onMounted(async () => {
     >
       <p class="mb-2 flex items-center gap-2 font-semibold"><Keyboard :size="16" />{{ $t("shortcuts.title") }}</p>
       <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-        <template v-for="k in ['F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F12', 'Esc']" :key="k">
+        <template v-for="k in ['F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', ...(cardsOn ? ['F9'] : []), 'F10', 'F12', 'Esc']" :key="k">
           <dt><kbd class="rounded border px-1.5 font-mono text-xs">{{ k }}</kbd></dt>
           <dd>{{ $t(`shortcuts.keys.${k}`) }}</dd>
         </template>

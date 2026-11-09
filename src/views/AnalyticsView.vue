@@ -3,7 +3,7 @@ import { debtTotals } from "@/db/customers";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { Download, Loader2 } from "lucide-vue-next";
+import { CalendarCheck, Loader2 } from "lucide-vue-next";
 import Chart from "@/components/data/Chart.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,7 +48,11 @@ import { listCategories, type Category } from "@/db/catalog";
 import { categoryInk } from "@/lib/categoryColor";
 import { previousRange, rangeDays, toLocalDate, type Preset } from "@/lib/dateRange";
 import { errorMessage } from "@/lib/errors";
-import { exportCsv } from "@/lib/exportCsv";
+import { exportTable, type Cell, type ExportFormat } from "@/lib/exportTable";
+import ExportMenu from "@/components/reports/ExportMenu.vue";
+import DayReportDialog from "@/components/reports/DayReportDialog.vue";
+import { usePayments } from "@/stores/payments";
+import { formatDate } from "@/lib/locale";
 import { formatCurrency } from "@/lib/format";
 import { useAuth } from "@/stores/auth";
 
@@ -57,6 +61,9 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuth();
 const canExport = computed(() => auth.can("analytics.export"));
+const { cards: cardsOn, load: loadPayments } = usePayments();
+loadPayments().catch(() => {});
+const dayReportOpen = ref(false);
 
 // ------------------------------------------------ filters (in the route)
 
@@ -261,11 +268,15 @@ const fileStem = (name: string) => {
   const r = filters.value.range;
   return `${name}_${toLocalDate(r.from)}_${toLocalDate(new Date(r.to.getTime() - 1))}`;
 };
-const doExport = async (name: string, rows: (string | number | null)[][]) => {
+const rangeLabel = () => {
+  const r = filters.value.range;
+  return `${formatDate(r.from)} – ${formatDate(new Date(r.to.getTime() - 1))}`;
+};
+const doExport = async (name: string, title: string, format: ExportFormat, rows: Cell[][]) => {
   exporting.value = name;
   error.value = "";
   try {
-    await exportCsv(fileStem(name), rows);
+    await exportTable(format, { name: fileStem(name), title, subtitle: rangeLabel() }, rows);
   } catch (e) {
     error.value = errorMessage(e);
   } finally {
@@ -273,23 +284,23 @@ const doExport = async (name: string, rows: (string | number | null)[][]) => {
   }
 };
 
-const exportProducts = () =>
-  doExport("products", [
+const exportProducts = (f: ExportFormat) =>
+  doExport("products", t("analytics.tabs.products"), f, [
     [t("inventory.table.name"), t("analytics.table.quantity"), t("analytics.kpi.revenue"), t("analytics.kpi.grossMargin")],
     ...products.value.map((p) => [p.name, p.quantity, p.revenue, p.margin]),
   ]);
-const exportEmployees = () =>
-  doExport("employees", [
+const exportEmployees = (f: ExportFormat) =>
+  doExport("employees", t("analytics.tabs.emp"), f, [
     [t("analytics.table.employee"), t("analytics.table.transactions"), t("analytics.kpi.revenue"), t("analytics.table.items"), t("analytics.table.hours"), t("analytics.table.perHour")],
-    ...staff.value.map((e) => [e.full_name, e.transactions, e.revenue, e.items, e.hours.toFixed(1), e.hours ? Math.round(e.revenue / e.hours) : ""]),
+    ...staff.value.map((e) => [e.full_name, e.transactions, e.revenue, e.items, Math.round(e.hours * 10) / 10, e.hours ? Math.round(e.revenue / e.hours) : ""]),
   ]);
-const exportSeries = () =>
-  doExport("sales", [
+const exportSeries = (f: ExportFormat) =>
+  doExport("sales", t("analytics.charts.salesOverview"), f, [
     [t("schedule.date"), t("analytics.kpi.revenue"), ...(compare.value ? [t("analytics.previousPeriod")] : [])],
     ...points.value.labels.map((l, i) => [l, points.value.now[i], ...(compare.value ? [points.value.before[i]] : [])]),
   ]);
-const exportExpenses = () =>
-  doExport("expenses", [
+const exportExpenses = (f: ExportFormat) =>
+  doExport("expenses", t("analytics.netProfit"), f, [
     [t("expenses.type"), t("expenses.amount")],
     ...expenses.value.map((e) => [e.name, e.amount]),
     [t("expenses.total"), expenseTotal.value],
@@ -324,7 +335,7 @@ const exportExpenses = () =>
         <SelectContent>
           <SelectItem value="all">{{ $t("analytics.filters.allPayments") }}</SelectItem>
           <SelectItem value="cash">{{ $t("pos.cash") }}</SelectItem>
-          <SelectItem value="card">{{ $t("pos.card") }}</SelectItem>
+          <SelectItem v-if="cardsOn || payment === 'card'" value="card">{{ $t("pos.card") }}</SelectItem>
         </SelectContent>
       </Select>
       <label class="ms-auto flex items-center gap-2 text-sm text-muted-foreground">
@@ -332,6 +343,7 @@ const exportExpenses = () =>
         {{ $t("analytics.compare") }}
       </label>
       <Loader2 v-if="loading" class="size-4 animate-spin text-muted-foreground" />
+      <Button variant="outline" size="sm" @click="dayReportOpen = true"><CalendarCheck /> {{ $t("reports.dayButton") }}</Button>
     </div>
     <p v-if="error" role="alert" class="text-sm text-destructive">{{ error }}</p>
 
@@ -364,9 +376,7 @@ const exportExpenses = () =>
             <span v-if="compare" class="flex items-center gap-1.5 text-xs text-muted-foreground">
               <span class="inline-block w-5 border-t border-dashed border-muted-foreground" /> {{ $t("analytics.previousPeriod") }}
             </span>
-            <Button v-if="canExport" variant="ghost" size="sm" class="ms-auto" :disabled="!!exporting" @click="exportSeries">
-              <Download /> CSV
-            </Button>
+            <ExportMenu v-if="canExport" class="ms-auto" :disabled="!!exporting" @export="exportSeries" />
           </div>
           <div class="relative h-64 w-full">
             <Chart type="line" :data="chartData" :options="chartOptions" />
@@ -447,9 +457,7 @@ const exportExpenses = () =>
         <section class="overflow-hidden rounded-xl border bg-card">
           <div class="flex items-center border-b px-5 py-4">
             <h2 class="font-semibold">{{ $t("analytics.charts.topProducts") }}</h2>
-            <Button v-if="canExport" variant="ghost" size="sm" class="ms-auto" :disabled="!!exporting" @click="exportProducts">
-              <Download /> {{ $t("analytics.exportAll") }}
-            </Button>
+            <ExportMenu v-if="canExport" class="ms-auto" :disabled="!!exporting" @export="exportProducts" />
           </div>
           <Table>
             <TableHeader>
@@ -505,9 +513,7 @@ const exportExpenses = () =>
         <section class="overflow-hidden rounded-xl border bg-card">
           <div class="flex items-center border-b px-5 py-4">
             <h2 class="font-semibold">{{ $t("analytics.table.performance") }}</h2>
-            <Button v-if="canExport" variant="ghost" size="sm" class="ms-auto" :disabled="!!exporting" @click="exportEmployees">
-              <Download /> CSV
-            </Button>
+            <ExportMenu v-if="canExport" class="ms-auto" :disabled="!!exporting" @export="exportEmployees" />
           </div>
           <Table>
             <TableHeader>
@@ -562,9 +568,7 @@ const exportExpenses = () =>
         <section class="rounded-xl border bg-card p-5">
           <div class="mb-4 flex items-center">
             <h2 class="font-semibold">{{ $t("analytics.expensesByType") }}</h2>
-            <Button v-if="canExport" variant="ghost" size="sm" class="ms-auto" :disabled="!!exporting" @click="exportExpenses">
-              <Download /> CSV
-            </Button>
+            <ExportMenu v-if="canExport" class="ms-auto" :disabled="!!exporting" @export="exportExpenses" />
           </div>
           <ul class="space-y-3">
             <li v-for="e in expenses" :key="e.type_id" class="space-y-1">
@@ -582,5 +586,6 @@ const exportExpenses = () =>
         </section>
       </TabsContent>
     </Tabs>
+    <DayReportDialog v-model:open="dayReportOpen" />
   </div>
 </template>

@@ -23,7 +23,6 @@ A desktop point-of-sale app for small shops. It runs offline on the till machine
 | Auth | `argon2` hashes for passwords and PINs | Session lives in Rust memory. |
 | Images | `image` (decode/orient/resize), `webp` (libwebp, lossy q80), `blurhash` | Rust only. |
 
-`flowbite` and `@tanstack/vue-table` are installed but unused; candidates for removal.
 
 ## Directory layout
 
@@ -107,7 +106,12 @@ pos/
     ├── src/settings.rs           Settings keys and shop profile writes
     ├── src/query.rs              Read-only `select` for the WebView
     ├── src/media.rs              Image pipeline, upload_media
-    ├── src/audit.rs              audit_log writes
+    ├── src/audit.rs              audit_log writes (on an extra till: forwarded to the main computer)
+    ├── src/loyalty.rs            Loyalty points: earn, spend, give back on returns, adjust
+    ├── src/device.rs             Settings kept per computer (printer, paper, auto-print, full screen)
+    ├── src/server.rs             Main computer: serves paired tills on the shop's network (port 7420)
+    ├── src/remote.rs             Extra till: forwards commands to the main computer (till.json)
+    ├── src/tills.rs              Settings → Tills commands: serve, pair, remove, leave
     ├── src/bridge.rs             Dev-only HTTP bridge (debug builds)
     ├── src/db.rs, src/error.rs
     ├── tauri.conf.json           Window, DB preload, asset protocol scope
@@ -142,7 +146,8 @@ The WebView is treated as untrusted: anything it can ask for, Rust checks.
 - **Writes** are specific commands (`commands.rs`). Each starts with `auth::require(ctx, "<permission>")`, which re-reads the user's role and permissions from the database every time. Role edits apply immediately, and a deactivated user is signed out on their next action.
 - **Escalation rules** (`staff.rs`): a non-owner can't grant a permission they don't hold, either in a role or by assigning a role; can't edit someone whose role outranks theirs; only owners hand out the Owner role. The last active owner can't be demoted or deactivated, and nobody can deactivate themselves.
 - **Secrets**: passwords and PINs are argon2 hashes. A PIN alone signs someone in, so PINs are unique (checked against every other hash). Read queries never select hash columns.
-- **Audit**: sign-ins, sign-outs, shifts, role, employee, schedule, settings and shop changes are written to `audit_log`.
+- **Audit**: sign-ins, sign-outs, shifts, sales, returns, stock, customers, suppliers, roles, employees, schedules, settings and shop changes are written to `audit_log`, and shown in Settings → Activity (`settings.audit`).
+- **Tills on the network**: only paired tills reach the main computer's server; see *Several tills*.
 - The UI mirrors permissions (`useAuth().can()`, `meta.permission`, hidden nav items), but that is convenience only.
 
 Errors cross the boundary as `{ code, message, detail? }`. The UI shows `errors.<code>` from the locale files (`lib/errors.ts`); `forbidden` names the missing permission.
@@ -230,6 +235,17 @@ Seeded roles: **Owner** (system role, implicitly every permission, can't be edit
 - **Sign-in throttling** (`auth.rs`): failures per `user:<name>` and one shared `pin` key in `auth_throttle`; 5 free, then 30 s doubling to 15 min. PIN approvals count too.
 - **Media cleanup** (`media::clean_unused`, hourly): unreferenced `media_files` rows older than a day, and stray files. HEIC uploads are converted with `sips` on macOS first.
 - **Export**: `save_csv` checks `analytics.export`, opens the save dialog in Rust (the WebView never supplies a path), and writes UTF-8 with a BOM so Excel shows Kurdish and Arabic.
+
+## Several tills
+
+One computer is the **main** one: it has the database and runs `server.rs`, a small HTTP server on `0.0.0.0:7420` (Settings → Tills → *Make this the main computer*; `lan_server` setting, started at launch). Other computers become **extra tills** by pairing: the main computer shows a six-digit code for ten minutes (single use, five wrong tries and it's gone); the till sends it with a name and gets a random secret back. The main computer keeps only the secret's SHA-256 in `tills`; the till keeps its address and secret in `till.json` in its config folder and restarts into till mode.
+
+- **Every command runs on the main computer.** On a till, each `#[tauri::command]` in `commands.rs` forwards its JSON to `POST /invoke/<name>` with `Authorization: Bearer <secret>` (`commands::run`). The main computer dispatches it with that till's own `SessionState`, so sign-in, permissions, shifts and audit work exactly as in its own window. Errors come back as they are (`Error::Remote`), so the till's screen translates them as usual. Photos upload to `/upload_media` and load from `/media/<file>?t=<secret>` (`media_base`).
+- **What stays on the till**: printing (`print_raster`, `list_printers`, the print dialog), the customer display, files saved with a dialog (exports), and the settings in `device.rs` (receipt printer, paper width, auto-print, full screen), which are kept in the till's own database. These check who is signed in by asking the main computer (`auth::current` → `whoami`). Backups, restores and spreadsheet imports are refused on a till (`main_only`).
+- **Same version on both ends**: every request carries `x-pos-version`; the main computer refuses a different one (`version_mismatch`), and Settings → Tills flags a till that needs updating.
+- **Removing a till** (`revoke_till`) locks its secret out at once. A till that leaves (`leave_main`) goes back to the data it had before pairing.
+- `sales.till_id` and `audit_log.till_id` record where a sale or an action came from.
+- **Limits**: plain HTTP on the shop's network (the secret is per till, not encrypted in transit); a till can't sell while the main computer is off; one SQLite database serves everyone, which is comfortable for about five tills on the recommended hardware (listed in Settings → Tills).
 
 ## Developing in a browser: the dev bridge
 

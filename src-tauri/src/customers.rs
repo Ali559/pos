@@ -246,6 +246,9 @@ pub async fn record_customer_payment(ctx: &Ctx, args: PaymentArgs) -> Result<Pay
     if !matches!(args.method.as_str(), "cash" | "card") {
         return Err(Error::Invalid(format!("unknown payment method {}", args.method)));
     }
+    if args.method == "card" && !crate::sales::card_payments(ctx).await? {
+        return Err(Error::Rule("card_payments_off"));
+    }
     let currency = shop_currency(ctx).await?;
     let amount = round_money(args.amount, &currency);
     if !(amount > 0.0) {

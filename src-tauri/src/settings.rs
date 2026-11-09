@@ -51,7 +51,15 @@ pub async fn set_setting(ctx: &Ctx, args: SetSettingArgs) -> Result<()> {
                 _ => return Err(Error::Invalid("expiry_warn_days must be 0–90".into())),
             }
         }
-        "os_notifications" | "barcode_lookup" | "auto_print" | "block_expired" | "backup_auto" | "fullscreen" => {
+        // Points: spend `loyalty_earn_per` to earn one, worth `loyalty_point_value` when spent
+        "loyalty_earn_per" | "loyalty_point_value" => {
+            let actor = auth::require(ctx, "settings.system").await?;
+            match v.parse::<f64>() {
+                Ok(n) if n > 0.0 && n <= 1_000_000_000.0 => Some(actor),
+                _ => return Err(Error::Rule("loyalty_rate")),
+            }
+        }
+        "os_notifications" | "barcode_lookup" | "auto_print" | "block_expired" | "backup_auto" | "fullscreen" | "card_payments" | "loyalty_enabled" => {
             let actor = auth::require(ctx, "settings.system").await?;
             flag(v)?;
             Some(actor)

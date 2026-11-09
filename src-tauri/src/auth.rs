@@ -61,7 +61,8 @@ pub fn validate_username(username: &str) -> Result<()> {
 // ------------------------------------------------------------ the actor
 
 /// The signed-in user as far as permission checks are concerned.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Actor {
     pub user_id: i64,
     #[allow(dead_code)]
@@ -104,6 +105,10 @@ pub async fn role_permissions(ctx: &Ctx, role_id: i64) -> Result<(bool, HashSet<
 /// The signed-in user, re-read from the database. A deactivated user is
 /// signed out on their next action.
 pub async fn current(ctx: &Ctx) -> Result<Actor> {
+    // An extra till: the main computer knows who is signed in here
+    if let Some(remote) = &ctx.remote {
+        return remote.whoami().await;
+    }
     let key = ctx.session.get().ok_or(Error::NotSignedIn)?;
     let row: Option<(i64, bool)> =
         sqlx::query_as("SELECT role_id, is_active FROM users WHERE id = $1")
@@ -121,6 +126,12 @@ pub async fn current(ctx: &Ctx) -> Result<Actor> {
         is_owner,
         permissions,
     })
+}
+
+/// Who is signed in, with their permissions. Extra tills ask this before
+/// doing something on their own computer (printing, saving a file).
+pub async fn whoami(ctx: &Ctx) -> Result<Actor> {
+    current(ctx).await
 }
 
 /// The signed-in user, if they hold `permission`.
