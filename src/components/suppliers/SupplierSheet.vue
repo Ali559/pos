@@ -8,22 +8,26 @@ import EditSheet from "@/components/EditSheet.vue";
 import type { Supplier } from "@/db/suppliers";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
+import { useRate } from "@/stores/rate";
 
 const open = defineModel<boolean>("open", { required: true });
 const props = defineProps<{ supplier: Supplier | null }>();
 const emit = defineEmits<{ saved: [id: number] }>();
 
-const form = ref({ name: "", contactPerson: "", phone: "", address: "", notes: "", isActive: true });
+const form = ref({ name: "", contactPerson: "", phone: "", address: "", notes: "", isActive: true, currency: "IQD" as "IQD" | "USD" });
+// A supplier can sell in dollars once the shop takes them
+const rate = useRate();
 const saving = ref(false);
 const error = ref("");
 
 watch(open, (v) => {
   if (!v) return;
   error.value = "";
+  rate.load().catch(() => {});
   const s = props.supplier;
   form.value = s
-    ? { name: s.name, contactPerson: s.contact_person ?? "", phone: s.phone ?? "", address: s.address ?? "", notes: s.notes ?? "", isActive: !!s.is_active }
-    : { name: "", contactPerson: "", phone: "", address: "", notes: "", isActive: true };
+    ? { name: s.name, contactPerson: s.contact_person ?? "", phone: s.phone ?? "", address: s.address ?? "", notes: s.notes ?? "", isActive: !!s.is_active, currency: s.currency ?? "IQD" }
+    : { name: "", contactPerson: "", phone: "", address: "", notes: "", isActive: true, currency: "IQD" };
 });
 
 const save = async () => {
@@ -35,6 +39,7 @@ const save = async () => {
     address: f.address || null,
     notes: f.notes || null,
     isActive: f.isActive,
+    currency: f.currency,
   };
   saving.value = true;
   error.value = "";
@@ -67,6 +72,14 @@ const save = async () => {
         <Label for="s-phone">{{ $t("suppliers.fields.phone") }}</Label>
         <Input id="s-phone" v-model="form.phone" dir="ltr" inputmode="tel" />
       </div>
+    </div>
+    <div v-if="rate.enabled.value || form.currency === 'USD'" class="space-y-2">
+      <Label for="s-currency">{{ $t("suppliers.fields.currency") }}</Label>
+      <select id="s-currency" v-model="form.currency" class="h-9 w-full rounded-md border border-input bg-card px-2 text-sm">
+        <option value="IQD">{{ $t("suppliers.currency.IQD") }}</option>
+        <option value="USD">{{ $t("suppliers.currency.USD") }}</option>
+      </select>
+      <p class="text-xs text-muted-foreground">{{ $t("suppliers.currencyHint") }}</p>
     </div>
     <div class="space-y-2">
       <Label for="s-address">{{ $t("suppliers.fields.address") }} <span class="font-normal text-muted-foreground">({{ $t("common.optional") }})</span></Label>

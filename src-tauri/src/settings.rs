@@ -59,7 +59,7 @@ pub async fn set_setting(ctx: &Ctx, args: SetSettingArgs) -> Result<()> {
                 _ => return Err(Error::Rule("loyalty_rate")),
             }
         }
-        "os_notifications" | "barcode_lookup" | "auto_print" | "block_expired" | "backup_auto" | "fullscreen" | "card_payments" | "loyalty_enabled" => {
+        "os_notifications" | "barcode_lookup" | "auto_print" | "block_expired" | "backup_auto" | "fullscreen" | "card_payments" | "loyalty_enabled" | "usd_enabled" => {
             let actor = auth::require(ctx, "settings.system").await?;
             flag(v)?;
             Some(actor)
@@ -106,7 +106,19 @@ pub async fn set_setting(ctx: &Ctx, args: SetSettingArgs) -> Result<()> {
             }
             Some(actor)
         }
-        "opening_float" => {
+        "rate_fetch" => {
+            let actor = auth::require(ctx, "settings.rates").await?;
+            flag(v)?;
+            Some(actor)
+        }
+        "rate_city" => {
+            let actor = auth::require(ctx, "settings.rates").await?;
+            if !crate::rates::CITIES.contains(&v) {
+                return Err(Error::Invalid(format!("unknown city {v}")));
+            }
+            Some(actor)
+        }
+        "opening_float" | "opening_float_usd" => {
             let actor = auth::require(ctx, "settings.system").await?;
             match v.parse::<f64>() {
                 Ok(n) if n >= 0.0 => Some(actor),

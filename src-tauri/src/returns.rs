@@ -480,6 +480,8 @@ mod tests {
                 wholesale_override_token: None,
                 points: 0,
                 card_amount: 0.0,
+                tendered_usd: 0.0,
+                rate: None,
             })
             .await
             .unwrap();
@@ -549,7 +551,7 @@ mod tests {
             assert_eq!(sum.expected_cash, 10750.0);
             assert_eq!(sum.sales, 2);
 
-            crate::auth::end_shift(&ctx, crate::auth::EndShiftArgs { counted_cash: Some(10500.0), note: None }).await.unwrap();
+            crate::auth::end_shift(&ctx, crate::auth::EndShiftArgs { counted_cash: Some(10500.0), counted_usd: None, note: None }).await.unwrap();
             let (diff,): (f64,) = sqlx::query_as("SELECT CAST(difference AS REAL) FROM cash_drawers").fetch_one(&ctx.pool).await.unwrap();
             assert_eq!(diff, -250.0);
         });
@@ -690,11 +692,11 @@ mod tests {
             setup_owner(&ctx).await;
             use crate::shifts::{count_opening_cash, shift_summary, OpeningCountArgs};
             assert!(!shift_summary(&ctx).await.unwrap().unwrap().opening_counted);
-            count_opening_cash(&ctx, OpeningCountArgs { amount: 25000.0 }).await.unwrap();
+            count_opening_cash(&ctx, OpeningCountArgs { amount: 25000.0, usd: None }).await.unwrap();
             let sum = shift_summary(&ctx).await.unwrap().unwrap();
             assert!(sum.opening_counted);
             assert_eq!(sum.expected_cash, 25000.0);
-            assert!(matches!(count_opening_cash(&ctx, OpeningCountArgs { amount: 1.0 }).await, Err(Error::Rule("opening_already_counted"))));
+            assert!(matches!(count_opening_cash(&ctx, OpeningCountArgs { amount: 1.0, usd: None }).await, Err(Error::Rule("opening_already_counted"))));
         });
     }
 }

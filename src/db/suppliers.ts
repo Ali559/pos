@@ -10,15 +10,17 @@ export interface Supplier {
   address: string | null;
   notes: string | null;
   is_active: number;
-  /** What the shop owes them */
+  /** IQD, or USD for a supplier who sells in dollars */
+  currency: "IQD" | "USD";
+  /** What the shop owes them, in their currency */
   owed: number;
   last_delivery: string | null;
   products: number;
 }
 
 const SUPPLIER_COLUMNS = `
-  s.id, s.name, s.contact_person, s.phone, s.address, s.notes, s.is_active,
-  COALESCE((SELECT SUM(amount) FROM supplier_ledger l WHERE l.supplier_id = s.id), 0) AS owed,
+  s.id, s.name, s.contact_person, s.phone, s.address, s.notes, s.is_active, s.currency,
+  COALESCE((SELECT SUM(amount) FROM supplier_ledger l WHERE l.supplier_id = s.id AND l.currency = s.currency), 0) AS owed,
   (SELECT MAX(received_at) FROM deliveries d WHERE d.supplier_id = s.id) AS last_delivery,
   (SELECT COUNT(*) FROM product_suppliers ps WHERE ps.supplier_id = s.id) AS products`;
 
@@ -37,10 +39,16 @@ export const listSuppliers = (opts: { search?: string; includeInactive?: boolean
 
 export const getSupplier = (id: number) => selectOne<Supplier>(`SELECT ${SUPPLIER_COLUMNS} FROM suppliers s WHERE s.id = $1`, [id]);
 
-export const owedToSuppliers = async () =>
-  (await selectOne<{ total: number }>(
-    `SELECT COALESCE(SUM(b), 0) AS total FROM (SELECT SUM(amount) AS b FROM supplier_ledger GROUP BY supplier_id HAVING SUM(amount) > 0.000001)`,
-  ))?.total ?? 0;
+/** What the shop owes all suppliers, in dinars and (to dollar suppliers) in dollars. */
+export const owedToSuppliers = async () => {
+  const rows = await select<{ currency: string; total: number }>(
+    `SELECT currency, COALESCE(SUM(b), 0) AS total FROM (
+       SELECT l.currency, SUM(l.amount) AS b FROM supplier_ledger l JOIN suppliers s ON s.id = l.supplier_id AND s.currency = l.currency
+       GROUP BY l.supplier_id, l.currency HAVING SUM(l.amount) > 0.000001)
+     GROUP BY currency`,
+  );
+  return { iqd: rows.find((r) => r.currency === "IQD")?.total ?? 0, usd: rows.find((r) => r.currency === "USD")?.total ?? 0 };
+};
 
 export interface SupplierEntry {
   id: number;
@@ -51,13 +59,16 @@ export interface SupplierEntry {
   note: string | null;
   user: string;
   created_at: string;
+  /** IQD or USD; running is the balance in that currency */
+  currency: string;
+  rate: number | null;
   running: number;
 }
 
 export const getSupplierLedger = (supplierId: number) =>
   select<SupplierEntry>(
-    `SELECT l.id, l.kind, l.amount, l.delivery_id, l.method, l.note, u.full_name AS user, l.created_at,
-            SUM(l.amount) OVER (ORDER BY l.created_at, l.id) AS running
+    `SELECT l.id, l.kind, l.amount, l.delivery_id, l.method, l.note, u.full_name AS user, l.created_at, l.currency, l.rate,
+            SUM(l.amount) OVER (PARTITION BY l.currency ORDER BY l.created_at, l.id) AS running
      FROM supplier_ledger l JOIN users u ON u.id = l.user_id
      WHERE l.supplier_id = $1 ORDER BY l.created_at, l.id`,
     [supplierId],
@@ -67,7 +78,10 @@ export interface DeliveryRow {
   id: number;
   supplier: string | null;
   invoice_number: string | null;
+  /** In the delivery's currency */
   total: number;
+  currency: string;
+  rate: number | null;
   items: number;
   user: string;
   received_at: string;
@@ -75,7 +89,7 @@ export interface DeliveryRow {
 
 export const listDeliveries = (opts: { supplierId?: number | null; limit?: number } = {}) =>
   select<DeliveryRow>(
-    `SELECT d.id, s.name AS supplier, d.invoice_number, d.total, u.full_name AS user, d.received_at,
+    `SELECT d.id, s.name AS supplier, d.invoice_number, d.total, d.currency, d.rate, u.full_name AS user, d.received_at,
             (SELECT COUNT(*) FROM delivery_items i WHERE i.delivery_id = d.id) AS items
      FROM deliveries d LEFT JOIN suppliers s ON s.id = d.supplier_id JOIN users u ON u.id = d.user_id
      ${opts.supplierId ? "WHERE d.supplier_id = $1" : ""}
@@ -88,7 +102,9 @@ export interface DeliveryItem {
   name: string;
   unit: string;
   quantity: number;
+  /** Per product unit, in IQD; `cost_foreign` as invoiced for a dollar delivery */
   cost: number;
+  cost_foreign: number | null;
   unit_name: string | null;
   unit_factor: number | null;
   expiry_date: string | null;
@@ -96,7 +112,7 @@ export interface DeliveryItem {
 
 export const getDeliveryItems = (deliveryId: number) =>
   select<DeliveryItem>(
-    `SELECT i.id, p.name, p.unit, i.quantity, i.cost, i.unit_name, i.unit_factor, i.expiry_date
+    `SELECT i.id, p.name, p.unit, i.quantity, i.cost, i.cost_foreign, i.unit_name, i.unit_factor, i.expiry_date
      FROM delivery_items i JOIN products p ON p.id = i.product_id WHERE i.delivery_id = $1 ORDER BY i.id`,
     [deliveryId],
   );

@@ -3,7 +3,7 @@
 // underscores: "product.create" → activity.actions.product_create) and the
 // entry's details fill it in. Unknown codes show as they are.
 import type { AuditEntry } from "@/db/audit";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatRate, formatUsd } from "@/lib/format";
 import { formatDateTime } from "@/lib/locale";
 import { i18n } from "@/utils/i18n";
 
@@ -101,7 +101,7 @@ const params = (e: AuditEntry, d: Details, users: Map<number, string>): Record<s
     case "customer.adjust":
     case "supplier.payment":
     case "supplier.adjust":
-      p.amount = money(d.amount);
+      p.amount = d.currency === "USD" ? iso(formatUsd(Number(d.amount) || 0)) : money(d.amount);
       p.method = d.method ? tr(`pos.${d.method}`, String(d.method)) : "";
       p.note = iso(d.note ?? "");
       break;
@@ -110,9 +110,13 @@ const params = (e: AuditEntry, d: Details, users: Map<number, string>): Record<s
       p.note = iso(d.note ?? "");
       break;
     case "delivery":
-      p.total = money(d.total);
-      p.paid = money(d.paid);
+      p.total = d.currency === "USD" ? iso(formatUsd(Number(d.total) || 0)) : money(d.total);
+      p.paid = d.currency === "USD" ? iso(formatUsd(Number(d.paid) || 0)) : money(d.paid);
       p.n = Number(d.lines) || 0;
+      break;
+    case "rate.set":
+      p.rate = iso(formatRate(Number(d.per100) || 0));
+      p.source = d.source && d.source !== "manual" ? iso(String(d.source).replace(/^telegram:/, "@")) : "";
       break;
     case "prices.bulk":
       p.n = Number(d.changed) || 0;
@@ -137,6 +141,7 @@ const params = (e: AuditEntry, d: Details, users: Map<number, string>): Record<s
 const messageKey = (e: AuditEntry, d: Details) => {
   const base = e.action.replace(/\./g, "_");
   if (e.action === "override") return d.granted ? "override_ok" : "override_failed";
+  if (e.action === "rate.set" && d.source && d.source !== "manual") return "rate_accept";
   if (e.action === "drawer.close" && (d.counted === null || d.counted === undefined)) return "drawer_close_uncounted";
   if (e.action === "category.active") return d.active ? "category_shown" : "category_archived";
   if (e.action === "promotion.delete" && d.archived) return "promotion_archived";
@@ -153,6 +158,7 @@ const extras = (e: AuditEntry, d: Details, users: Map<number, string>) => {
     if (Number(d.onAccount) > 0) out.push(t("activity.extra.onAccount", { amount: money(d.onAccount) }));
     if (Number(d.card) > 0) out.push(t("activity.extra.card", { amount: money(d.card) }));
     if (Number(d.points) > 0) out.push(t("activity.extra.points", { n: d.points }));
+    if (Number(d.usd) > 0) out.push(t("activity.extra.usd", { usd: iso(formatUsd(Number(d.usd))), rate: iso(formatRate(Number(d.rate) || 0)) }));
   }
   if (e.action === "user.update") {
     if (d.passwordChanged) out.push(t("activity.extra.password"));

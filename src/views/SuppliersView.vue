@@ -17,7 +17,7 @@ import {
   type DeliveryRow,
   type Supplier,
 } from "@/db/suppliers";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatIn, formatUsd } from "@/lib/format";
 import { formatDate, formatDateTime } from "@/lib/locale";
 import { useAuth } from "@/stores/auth";
 
@@ -27,7 +27,7 @@ const canReceive = computed(() => auth.can("inventory.adjust_stock"));
 
 // Suppliers
 const suppliers = ref<Supplier[]>([]);
-const owed = ref(0);
+const owed = ref({ iqd: 0, usd: 0 });
 const search = ref("");
 const showInactive = ref(false);
 const loadSuppliers = async () => {
@@ -94,7 +94,8 @@ const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).repla
         <div class="flex flex-wrap items-center gap-3">
           <div class="rounded-xl border bg-card px-5 py-3">
             <p class="text-xs text-muted-foreground">{{ $t("suppliers.totalOwed") }}</p>
-            <p class="num text-2xl font-bold">{{ formatCurrency(owed) }}</p>
+            <p class="num text-2xl font-bold">{{ formatCurrency(owed.iqd) }}</p>
+            <p v-if="owed.usd" class="num text-sm font-semibold" dir="ltr">+ {{ formatUsd(owed.usd) }}</p>
           </div>
           <div class="relative min-w-64 flex-1">
             <Search :size="18" class="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -124,7 +125,7 @@ const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).repla
                 <TableCell class="num text-muted-foreground" dir="ltr">{{ s.phone ?? "—" }}</TableCell>
                 <TableCell class="num text-end">{{ s.products }}</TableCell>
                 <TableCell class="text-muted-foreground">{{ s.last_delivery ? formatDate(new Date(s.last_delivery)) : "—" }}</TableCell>
-                <TableCell class="num pe-5 text-end font-semibold" :class="s.owed > 0 ? 'text-destructive' : 'text-muted-foreground'">{{ s.owed > 0 ? formatCurrency(s.owed) : "—" }}</TableCell>
+                <TableCell class="num pe-5 text-end font-semibold" :class="s.owed > 0 ? 'text-destructive' : 'text-muted-foreground'">{{ s.owed > 0 ? formatIn(s.owed, s.currency) : "—" }}</TableCell>
               </TableRow>
             </TableBody>
           </Table>
@@ -141,7 +142,7 @@ const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).repla
                   <p class="font-medium"><bdi>{{ d.supplier ?? $t("deliveries.noSupplier") }}</bdi><span v-if="d.invoice_number" class="num ms-2 text-sm text-muted-foreground" dir="ltr">{{ d.invoice_number }}</span></p>
                   <p class="text-xs text-muted-foreground">{{ formatDateTime(new Date(d.received_at)) }} · {{ d.user }} · {{ $t("deliveries.lines", { n: d.items }) }}</p>
                 </div>
-                <span class="num font-semibold">{{ formatCurrency(d.total) }}</span>
+                <span class="num font-semibold">{{ formatIn(d.total, d.currency) }}</span>
                 <ChevronDown :size="16" class="transition-transform" :class="expanded === d.id ? 'rotate-180' : ''" />
               </button>
               <table v-if="expanded === d.id" class="mx-5 mb-3 w-[calc(100%-2.5rem)] text-sm">
@@ -153,7 +154,9 @@ const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).repla
                       <template v-else>{{ fmt(it.quantity) }}</template>
                     </td>
                     <td class="num py-1.5 text-end text-muted-foreground">{{ it.expiry_date ?? "" }}</td>
-                    <td class="num py-1.5 text-end">{{ formatCurrency(it.quantity * it.cost) }}</td>
+                    <td class="num py-1.5 text-end">
+                      {{ it.cost_foreign != null ? formatUsd(it.quantity * it.cost_foreign) : formatCurrency(it.quantity * it.cost) }}
+                    </td>
                   </tr>
                 </tbody>
               </table>

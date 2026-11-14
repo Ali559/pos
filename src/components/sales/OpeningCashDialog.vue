@@ -5,21 +5,24 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatUsd } from "@/lib/format";
 
 // First thing on a new shift: count what's in the drawer. The usual float
 // is filled in; the count is what End shift measures against.
-const props = defineProps<{ expected: number }>();
+// Dollars too, when the shop takes them (`expectedUsd` is then set).
+const props = defineProps<{ expected: number; expectedUsd?: number | null }>();
 const open = defineModel<boolean>("open", { required: true });
 const emit = defineEmits<{ counted: [amount: number] }>();
 
 const amount = ref("");
+const usd = ref("");
 const busy = ref(false);
 const error = ref("");
 
 watch(open, (isOpen) => {
   if (!isOpen) return;
   amount.value = String(props.expected);
+  usd.value = props.expectedUsd == null ? "" : String(props.expectedUsd);
   error.value = "";
 });
 
@@ -28,7 +31,8 @@ const submit = async () => {
   error.value = "";
   try {
     const n = Number(amount.value) || 0;
-    await call("count_opening_cash", { amount: n });
+    const dollars = props.expectedUsd == null || usd.value === "" ? null : Number(usd.value) || 0;
+    await call("count_opening_cash", { amount: n, usd: dollars });
     open.value = false;
     emit("counted", n);
   } catch (e) {
@@ -60,6 +64,18 @@ const submit = async () => {
           :aria-label="$t('shiftStart.counted')"
           class="num h-16 w-full rounded-xl border-2 border-input bg-card px-4 text-center text-3xl font-semibold outline-none focus:border-primary"
         />
+        <div v-if="expectedUsd != null" class="space-y-1.5">
+          <label for="opening-usd" class="text-sm font-medium">{{ $t("shiftStart.dollars", { amount: formatUsd(expectedUsd) }) }}</label>
+          <input
+            id="opening-usd"
+            v-model="usd"
+            type="number"
+            min="0"
+            step="any"
+            dir="ltr"
+            class="num h-12 w-full rounded-xl border-2 border-input bg-card px-4 text-center text-2xl font-semibold outline-none focus:border-primary"
+          />
+        </div>
         <p v-if="error" role="alert" class="text-sm font-medium text-destructive">{{ error }}</p>
         <div class="flex justify-end gap-2">
           <Button type="button" variant="ghost" @click="open = false">{{ $t("shiftStart.later") }}</Button>

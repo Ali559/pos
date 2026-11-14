@@ -87,11 +87,13 @@ async fn ensure_drawer(ctx: &Ctx, user_id: i64, shift_id: i64) -> Result<(i64, f
         return Ok(d);
     }
     let float: f64 = crate::settings::get(ctx, "opening_float", "0").await?.parse().unwrap_or(0.0);
+    let float_usd: f64 = crate::settings::get(ctx, "opening_float_usd", "0").await?.parse().unwrap_or(0.0);
     let opened: (String,) = sqlx::query_as("SELECT clocked_in_at FROM shifts WHERE id = $1").bind(shift_id).fetch_one(&ctx.pool).await?;
-    let id = sqlx::query("INSERT INTO cash_drawers (user_id, shift_id, opening_amount, opened_at) VALUES ($1, $2, $3, $4)")
+    let id = sqlx::query("INSERT INTO cash_drawers (user_id, shift_id, opening_amount, opening_usd, opened_at) VALUES ($1, $2, $3, $4, $5)")
         .bind(user_id)
         .bind(shift_id)
         .bind(float)
+        .bind(float_usd)
         .bind(&opened.0)
         .execute(&ctx.pool)
         .await?
@@ -134,6 +136,17 @@ pub struct ShiftSummary {
     /// Returns recorded on this shift, and what they gave back in all
     pub returns: i64,
     pub returns_total: f64,
+    /// Dollars (when the shop takes them): in the drawer at the start, taken
+    /// for sales (and the part of the sales they paid, in IQD), the dinars
+    /// given back as change for them, paid out to suppliers (negative), and
+    /// what the drawer should hold now
+    pub usd_enabled: bool,
+    pub opening_usd: f64,
+    pub usd_in: f64,
+    pub usd_sales: f64,
+    pub usd_change: f64,
+    pub paid_to_suppliers_usd: f64,
+    pub expected_usd: f64,
 }
 
 async fn summary_for(ctx: &Ctx, user_id: i64) -> Result<Option<ShiftSummary>> {
@@ -141,10 +154,20 @@ async fn summary_for(ctx: &Ctx, user_id: i64) -> Result<Option<ShiftSummary>> {
         return Ok(None);
     };
     let (drawer_id, float) = ensure_drawer(ctx, user_id, shift.id).await?;
-    let (counted,): (Option<String>,) = sqlx::query_as("SELECT opening_counted_at FROM cash_drawers WHERE id = $1")
+    let (counted, opening_usd): (Option<String>, f64) = sqlx::query_as("SELECT opening_counted_at, CAST(COALESCE(opening_usd, 0) AS REAL) FROM cash_drawers WHERE id = $1")
         .bind(drawer_id)
         .fetch_one(&ctx.pool)
         .await?;
+    let (usd_in, usd_sales, usd_change, paid_to_suppliers_usd): (f64, f64, f64, f64) = sqlx::query_as(
+        "SELECT CAST(COALESCE(SUM(CASE WHEN sale_id IS NOT NULL THEN foreign_amount END), 0) AS REAL),
+                CAST(COALESCE(SUM(CASE WHEN sale_id IS NOT NULL THEN amount END), 0) AS REAL),
+                CAST(COALESCE(SUM(change_given), 0) AS REAL),
+                CAST(COALESCE(SUM(CASE WHEN sale_id IS NULL THEN foreign_amount END), 0) AS REAL)
+         FROM payments WHERE shift_id = $1 AND payment_method = 'usd'",
+    )
+    .bind(shift.id)
+    .fetch_one(&ctx.pool)
+    .await?;
     #[allow(clippy::type_complexity)]
     let (sales, cash_sales, card_sales, cash_refunds, card_refunds, debt_paid_cash, debt_paid_card, on_account, paid_to_suppliers): (i64, f64, f64, f64, f64, f64, f64, f64, f64) = sqlx::query_as(
         "SELECT COUNT(DISTINCT CASE WHEN amount > 0 THEN sale_id END),
@@ -204,20 +227,31 @@ async fn summary_for(ctx: &Ctx, user_id: i64) -> Result<Option<ShiftSummary>> {
         debt_paid_card,
         on_account,
         paid_to_suppliers,
-        expected_cash: float + cash_sales + cash_refunds + debt_paid_cash + paid_to_suppliers,
+        // Change for dollars comes out of the dinars
+        expected_cash: float + cash_sales + cash_refunds + debt_paid_cash + paid_to_suppliers - usd_change,
+        usd_enabled: crate::rates::usd_enabled(ctx).await?,
+        opening_usd,
+        usd_in,
+        usd_sales,
+        usd_change,
+        paid_to_suppliers_usd,
+        expected_usd: opening_usd + usd_in + paid_to_suppliers_usd,
     }))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct OpeningCountArgs {
     pub amount: f64,
+    /// Dollars in the drawer, when the shop takes them
+    #[serde(default)]
+    pub usd: Option<f64>,
 }
 
 /// The cash actually in the drawer as the shift starts. Once per shift:
 /// after that the count is part of the record.
 pub async fn count_opening_cash(ctx: &Ctx, args: OpeningCountArgs) -> Result<()> {
     let actor = auth::require(ctx, "sales.sell").await?;
-    if !(args.amount >= 0.0) {
+    if !(args.amount >= 0.0) || args.usd.is_some_and(|u| !(u >= 0.0)) {
         return Err(Error::Rule("negative_amount"));
     }
     let Some(shift) = shift_info(ctx, actor.user_id).await? else {
@@ -225,17 +259,18 @@ pub async fn count_opening_cash(ctx: &Ctx, args: OpeningCountArgs) -> Result<()>
     };
     let (drawer_id, float) = ensure_drawer(ctx, actor.user_id, shift.id).await?;
     let done = sqlx::query(
-        "UPDATE cash_drawers SET opening_amount = $1, opening_counted_at = $2 WHERE id = $3 AND opening_counted_at IS NULL",
+        "UPDATE cash_drawers SET opening_amount = $1, opening_counted_at = $2, opening_usd = COALESCE($4, opening_usd) WHERE id = $3 AND opening_counted_at IS NULL",
     )
     .bind(args.amount)
     .bind(now())
     .bind(drawer_id)
+    .bind(args.usd)
     .execute(&ctx.pool)
     .await?;
     if done.rows_affected() == 0 {
         return Err(Error::Rule("opening_already_counted"));
     }
-    audit::log(ctx, Some(actor.user_id), "drawer.open", "shifts", Some(shift.id), &serde_json::json!({ "counted": args.amount, "expected": float })).await
+    audit::log(ctx, Some(actor.user_id), "drawer.open", "shifts", Some(shift.id), &serde_json::json!({ "counted": args.amount, "expected": float, "usd": args.usd })).await
 }
 
 /// The signed-in user's open shift, for the End shift dialog.
@@ -245,8 +280,8 @@ pub async fn shift_summary(ctx: &Ctx) -> Result<Option<ShiftSummary>> {
 }
 
 /// Records the count and closes the drawer. Called just before clock-out.
-pub async fn close_drawer(ctx: &Ctx, user_id: i64, counted: Option<f64>, note: Option<&str>) -> Result<()> {
-    if counted.is_some_and(|c| !(c >= 0.0)) {
+pub async fn close_drawer(ctx: &Ctx, user_id: i64, counted: Option<f64>, counted_usd: Option<f64>, note: Option<&str>) -> Result<()> {
+    if counted.is_some_and(|c| !(c >= 0.0)) || counted_usd.is_some_and(|c| !(c >= 0.0)) {
         return Err(Error::Rule("negative_amount"));
     }
     let Some(sum) = summary_for(ctx, user_id).await? else {
@@ -254,7 +289,8 @@ pub async fn close_drawer(ctx: &Ctx, user_id: i64, counted: Option<f64>, note: O
     };
     let note = note.map(str::trim).filter(|s| !s.is_empty());
     sqlx::query(
-        "UPDATE cash_drawers SET closing_amount = $1, expected_amount = $2, difference = $3, closed_at = $4, notes = $5
+        "UPDATE cash_drawers SET closing_amount = $1, expected_amount = $2, difference = $3, closed_at = $4, notes = $5,
+                closing_usd = $7, expected_usd = $8, difference_usd = $9
          WHERE id = (SELECT cash_drawer_id FROM shifts WHERE id = $6)",
     )
     .bind(counted)
@@ -263,9 +299,12 @@ pub async fn close_drawer(ctx: &Ctx, user_id: i64, counted: Option<f64>, note: O
     .bind(now())
     .bind(note)
     .bind(sum.shift_id)
+    .bind(counted_usd)
+    .bind(sum.usd_enabled.then_some(sum.expected_usd))
+    .bind(counted_usd.map(|c| c - sum.expected_usd))
     .execute(&ctx.pool)
     .await?;
-    audit::log(ctx, Some(user_id), "drawer.close", "shifts", Some(sum.shift_id), &serde_json::json!({ "expected": sum.expected_cash, "counted": counted })).await
+    audit::log(ctx, Some(user_id), "drawer.close", "shifts", Some(sum.shift_id), &serde_json::json!({ "expected": sum.expected_cash, "counted": counted, "expectedUsd": sum.expected_usd, "countedUsd": counted_usd })).await
 }
 
 pub async fn clock_out(ctx: &Ctx, user_id: i64) -> Result<()> {

@@ -412,13 +412,16 @@ pub async fn logout(ctx: &Ctx) -> Result<()> {
 pub struct EndShiftArgs {
     /// Cash counted in the drawer; None skips the count
     pub counted_cash: Option<f64>,
+    /// Dollars counted, when the shop takes them
+    #[serde(default)]
+    pub counted_usd: Option<f64>,
     pub note: Option<String>,
 }
 
 /// Counts the drawer, clocks the signed-in user out and signs them out.
 pub async fn end_shift(ctx: &Ctx, args: EndShiftArgs) -> Result<()> {
     let actor = current(ctx).await?;
-    shifts::close_drawer(ctx, actor.user_id, args.counted_cash, args.note.as_deref()).await?;
+    shifts::close_drawer(ctx, actor.user_id, args.counted_cash, args.counted_usd, args.note.as_deref()).await?;
     shifts::clock_out(ctx, actor.user_id).await?;
     logout(ctx).await
 }

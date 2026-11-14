@@ -80,7 +80,7 @@ Built 2026-11-07 (migration `0011`, `src-tauri/src/customers.rs`, Customers scre
 | Attach a customer to a sale | S | ✅ |
 | Debt (قەرز) | M | ✅ |
 | Loyalty points | S | ✅ (phase 14) |
-| IQD + USD | M | ⬜ later |
+| IQD + USD | M | ✅ 2026-11-14: dollars at the till and for suppliers (see §15) |
 
 **How it works**
 - **Balance = the customer's ledger.** `customer_ledger` rows are only ever added: `sale` (left on account), `payment` (paid back), `refund` (a return onto the account), `adjustment` (an opening balance from the paper notebook, or a correction, always with a reason). Positive means they owe the shop.
@@ -189,6 +189,21 @@ Built 2026-11-09 (migration `0015`, `loyalty.rs`, `device.rs`, `server.rs`, `rem
 | Analytics export to Excel and PDF | S | ✅ |
 | Loyalty points | M | ✅ |
 | Several tills on the shop's network | L | ✅ (no offline selling on extra tills) |
+| Encrypted traffic between tills (TLS, pinned certificate, SPAKE2 pairing) | M | ✅ 2026-11-14 |
+
+## 15. US dollars ✅
+
+Built 2026-11-14 (migration `0016`, `src-tauri/src/rates.rs`, Settings → Payments → *US dollars*). Decided with the owner: customers can pay in dollars at the till and suppliers can sell in dollars; prices and customer debt stay in IQD; a rate read from Telegram is only used once a manager accepts it; Erbil's market by default. Covered by Rust tests (the parser on a saved Telegram page, a sale paid in dollars through the drawer, a dollar supplier) and typechecked; not yet clicked through in the app.
+
+| Item | Size | Status |
+| --- | --- | --- |
+| Market rate: typed, or read from Telegram and accepted | M | ✅ |
+| Paying in dollars at the till, change in dinars | M | ✅ |
+| Dollars counted in the drawer, on the shift and day reports | S | ✅ |
+| Suppliers who sell in dollars | M | ✅ |
+| Prices in dollars, customer debt in dollars | M | ⬜ not wanted for now |
+
+**How it works**: see ARCHITECTURE.md → *Money* → *US dollars*. The rate is always "IQD per 100 USD". No API publishes the market (bourse) rate, so the main computer reads public Telegram channels (`@dollariraqi`, then `@uuuurrr9`, `@dollar_price`) every 20 minutes; if their posts change shape, the rate can always be typed by hand.
 
 **How it works**
 - **Activity** (`settings.audit`): `audit_log` rows carry an action code and JSON details; `src/lib/activity.ts` turns each into a sentence from `activity.actions.*` in the shop's language, naming the product, customer, receipt, etc. by its current name. Filters: dates, person, kind (`ACTIVITY_GROUPS` in `src/db/audit.ts`), text. Rows from an extra till show its name (`audit_log.till_id`).

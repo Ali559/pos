@@ -82,6 +82,14 @@ pub struct CheckoutArgs {
     /// (cash). Needs card payments switched on.
     #[serde(default)]
     pub card_amount: f64,
+    /// Dollars handed over for the cash part (change is given in dinars).
+    /// `tendered` is then the dinars handed over with them, if any.
+    #[serde(default)]
+    pub tendered_usd: f64,
+    /// The rate (IQD per 100 USD) the screen showed; checkout refuses a
+    /// different one (`rate_changed`)
+    #[serde(default)]
+    pub rate: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -111,6 +119,10 @@ pub struct SaleResult {
     pub points_value: f64,
     pub points_earned: i64,
     pub points_balance: Option<i64>,
+    /// Paid in dollars: how many, at what rate, and what they were worth
+    pub tendered_usd: f64,
+    pub rate: Option<f64>,
+    pub usd_value: f64,
 }
 
 /// Card payments are off unless the shop switches them on (Settings →
@@ -181,7 +193,13 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
             return Err(Error::Rule("negative_amount"));
         }
     }
-    if !(args.cart_discount >= 0.0) || args.tendered.is_some_and(|t| !(t >= 0.0)) || !(args.on_account >= 0.0) || !(args.card_amount >= 0.0) || args.points < 0 {
+    if !(args.cart_discount >= 0.0)
+        || args.tendered.is_some_and(|t| !(t >= 0.0))
+        || !(args.on_account >= 0.0)
+        || !(args.card_amount >= 0.0)
+        || !(args.tendered_usd >= 0.0)
+        || args.points < 0
+    {
         return Err(Error::Rule("negative_amount"));
     }
     if (args.on_account > 0.0 || args.points > 0) && args.customer_id.is_none() {
@@ -193,6 +211,10 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     if args.card_amount > 0.0 && args.payment_method != "cash" {
         return Err(Error::Invalid("a split payment is cash plus card".into()));
     }
+    if args.tendered_usd > 0.0 && args.payment_method != "cash" {
+        return Err(Error::Invalid("dollars are cash".into()));
+    }
+    let usd_rate = if args.tendered_usd > 0.0 { Some(crate::rates::rate_for_payment(ctx, args.rate).await?) } else { None };
 
     let (tax_rate,): (f64,) = sqlx::query_as(
         "SELECT COALESCE((SELECT CAST(value AS REAL) FROM settings WHERE key = 'tax_rate'), 0)",
@@ -418,7 +440,24 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
     }
     // With a split, the cash part is what's left after the card
     let cash_due = due - card_amount;
+    // Dollars: they pay what the dinars handed over don't, and the change
+    // comes back in dinars
+    let usd = match usd_rate {
+        Some(rate) => {
+            let dinars = round_money(args.tendered.unwrap_or(0.0), &currency);
+            let value = crate::rates::to_iqd(args.tendered_usd, rate);
+            if cash_due <= 0.0 || dinars >= cash_due {
+                return Err(Error::Rule("usd_not_needed"));
+            }
+            if dinars + value < cash_due {
+                return Err(Error::Rule("tendered_short"));
+            }
+            Some(UsdPart { dollars: args.tendered_usd, rate, value, dinars, paid: cash_due - dinars, change: dinars + value - cash_due })
+        }
+        None => None,
+    };
     let (tendered, change) = match (args.payment_method.as_str(), args.tendered) {
+        _ if usd.is_some() => (None, None),
         ("cash", Some(t)) if cash_due > 0.0 && t < cash_due => return Err(Error::Rule("tendered_short")),
         ("cash", Some(t)) if cash_due > 0.0 => (Some(t), Some(round_money(t - cash_due, &currency))),
         _ => (None, None),
@@ -527,7 +566,31 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
             .execute(&mut *tx)
             .await?;
     }
-    if cash_due > 0.0 || (exchange.is_none() && on_account == 0.0 && points_used == 0 && card_amount == 0.0) {
+    if let Some(u) = &usd {
+        if u.dinars > 0.0 {
+            sqlx::query("INSERT INTO payments (sale_id, payment_method, amount, tendered, shift_id, payment_date) VALUES ($1, 'cash', $2, $2, $3, $4)")
+                .bind(id)
+                .bind(u.dinars)
+                .bind(shift_id)
+                .bind(&at)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query(
+            "INSERT INTO payments (sale_id, payment_method, amount, tendered, change_given, foreign_amount, rate, shift_id, payment_date)
+             VALUES ($1, 'usd', $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(id)
+        .bind(u.paid)
+        .bind(u.value)
+        .bind(u.change)
+        .bind(u.dollars)
+        .bind(u.rate)
+        .bind(shift_id)
+        .bind(&at)
+        .execute(&mut *tx)
+        .await?;
+    } else if cash_due > 0.0 || (exchange.is_none() && on_account == 0.0 && points_used == 0 && card_amount == 0.0) {
         sqlx::query(
             "INSERT INTO payments (sale_id, payment_method, amount, tendered, change_given, shift_id, payment_date)
              VALUES ($1, $2, $3, $4, $5, $6, $7)",
@@ -585,14 +648,33 @@ pub async fn checkout(ctx: &Ctx, args: CheckoutArgs) -> Result<SaleResult> {
         "sale",
         "sales",
         Some(id),
-        &serde_json::json!({ "receipt": receipt_number, "total": total, "items": lines.len(), "discount": discount, "approvedBy": approved_by, "customer": args.customer_id, "onAccount": on_account, "card": card_amount, "points": points_used }),
+        &serde_json::json!({ "receipt": receipt_number, "total": total, "items": lines.len(), "discount": discount, "approvedBy": approved_by, "customer": args.customer_id, "onAccount": on_account, "card": card_amount, "points": points_used, "usd": usd.as_ref().map(|u| u.dollars), "rate": usd.as_ref().map(|u| u.rate) }),
     )
     .await?;
     notifications::refresh_quietly(ctx).await;
     Ok(SaleResult {
-        id, receipt_number, subtotal, discount, tax, total, tendered, change, returned, refunded, on_account, promotions,
+        id, receipt_number, subtotal, discount, tax, total, returned, refunded, on_account, promotions,
         card_amount, points_used, points_value, points_earned, points_balance,
+        tendered: usd.as_ref().map_or(tendered, |u| Some(u.dinars)),
+        change: usd.as_ref().map_or(change, |u| Some(u.change)),
+        tendered_usd: usd.as_ref().map_or(0.0, |u| u.dollars),
+        rate: usd.as_ref().map(|u| u.rate),
+        usd_value: usd.as_ref().map_or(0.0, |u| u.value),
     })
+}
+
+/// The cash part of a sale paid (partly) in dollars.
+struct UsdPart {
+    dollars: f64,
+    rate: f64,
+    /// What the dollars are worth, in dinars
+    value: f64,
+    /// Dinars handed over with them
+    dinars: f64,
+    /// The part of the sale the dollars paid
+    paid: f64,
+    /// Dinars given back
+    change: f64,
 }
 
 fn items_sale(args: &CheckoutArgs) -> Option<i64> {
@@ -710,6 +792,8 @@ pub mod tests {
             wholesale_override_token: None,
             points: 0,
             card_amount: 0.0,
+            tendered_usd: 0.0,
+            rate: None,
         }
     }
 
@@ -926,6 +1010,8 @@ pub mod tests {
                 wholesale_override_token: None,
                 points: 0,
                 card_amount: 0.0,
+                tendered_usd: 0.0,
+                rate: None,
             })
             .await
             .unwrap();

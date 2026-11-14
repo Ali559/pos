@@ -62,7 +62,7 @@ export const useAuth = () => ({
     await call("logout");
     session.value = null;
   },
-  endShift: async (count: { countedCash: number | null; note: string | null }) => {
+  endShift: async (count: { countedCash: number | null; countedUsd?: number | null; note: string | null }) => {
     await call("end_shift", count);
     session.value = null;
   },

@@ -7,7 +7,7 @@ import DateInput from "@/components/pickers/DateInput.vue";
 import { dayReport, type DayReport } from "@/db/reports";
 import { fromLocalDate, toLocalDate } from "@/lib/dateRange";
 import { errorMessage } from "@/lib/errors";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatUsd } from "@/lib/format";
 import { formatDate } from "@/lib/locale";
 import { daySlip } from "@/lib/reportSlips";
 import { printSlip } from "@/lib/slip";
@@ -135,6 +135,9 @@ const print = async () => {
                     <td class="num px-3 py-2 text-end">{{ formatCurrency(c.refunded) }}</td>
                     <td class="num px-3 py-2 text-end" :class="c.drawer ? (c.drawer > 0 ? 'text-success' : 'text-destructive') : ''">
                       {{ c.drawer === null ? "—" : c.drawer === 0 ? $t("shiftEnd.balanced") : (c.drawer > 0 ? "+" : "−") + formatCurrency(Math.abs(c.drawer)) }}
+                      <span v-if="c.drawer_usd" class="block text-xs" dir="ltr" :class="c.drawer_usd > 0 ? 'text-success' : 'text-destructive'">
+                        {{ (c.drawer_usd > 0 ? "+" : "−") + formatUsd(Math.abs(c.drawer_usd)) }}
+                      </span>
                     </td>
                   </tr>
                 </tbody>

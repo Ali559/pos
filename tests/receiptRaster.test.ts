@@ -2,7 +2,7 @@
 import { describe, expect, mock, test } from "bun:test";
 
 // receiptRaster imports the app's i18n and formatting; packBits needs none of it
-mock.module("@/lib/format", () => ({ formatCurrency: String }));
+mock.module("@/lib/format", () => ({ formatCurrency: String, formatUsd: String }));
 mock.module("@/lib/locale", () => ({ formatDateTime: String }));
 mock.module("@/utils/i18n", () => ({ i18n: { global: { t: String } } }));
 const { packBits } = await import("../src/lib/receiptRaster");

@@ -40,6 +40,8 @@ const auth = useAuth();
 const canSystem = computed(() => auth.can("settings.system"));
 const canShop = computed(() => auth.can("settings.shop"));
 const canAudit = computed(() => auth.can("settings.audit"));
+// Managers set the dollar rate without other system settings
+const canPayments = computed(() => canSystem.value || auth.can("settings.rates"));
 // ?tab=backups opens a tab directly (e.g. from a backup alert)
 const route = useRoute();
 const activeTab = ref(typeof route.query.tab === "string" ? route.query.tab : "general");
@@ -243,7 +245,7 @@ onMounted(async () => {
       <TabsList class="mb-6">
         <TabsTrigger value="general">{{ $t("settings.tabs.general") }}</TabsTrigger>
         <TabsTrigger v-if="canShop" value="shop">{{ $t("settings.tabs.shop") }}</TabsTrigger>
-        <TabsTrigger v-if="canSystem" value="payments">{{ $t("settings.tabs.payments") }}</TabsTrigger>
+        <TabsTrigger v-if="canPayments" value="payments">{{ $t("settings.tabs.payments") }}</TabsTrigger>
         <TabsTrigger v-if="canSystem" value="backups">{{ $t("settings.tabs.backups") }}</TabsTrigger>
         <TabsTrigger v-if="canSystem" value="tills">{{ $t("settings.tabs.tills") }}</TabsTrigger>
         <TabsTrigger v-if="canAudit" value="activity">{{ $t("settings.tabs.activity") }}</TabsTrigger>
@@ -507,7 +509,7 @@ onMounted(async () => {
         </form>
       </TabsContent>
 
-      <TabsContent v-if="canSystem" value="payments">
+      <TabsContent v-if="canPayments" value="payments">
         <PaymentsTab />
       </TabsContent>
       <TabsContent v-if="canSystem" value="backups">

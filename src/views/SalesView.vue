@@ -41,6 +41,8 @@ import OpeningCashDialog from "@/components/sales/OpeningCashDialog.vue";
 import { useReturnCart } from "@/stores/returnCart";
 import { RouterLink } from "vue-router";
 import CashDialog from "@/components/sales/CashDialog.vue";
+import RateBar from "@/components/rates/RateBar.vue";
+import { useRate } from "@/stores/rate";
 import DiscountDialog from "@/components/sales/DiscountDialog.vue";
 import ManagerPinDialog from "@/components/sales/ManagerPinDialog.vue";
 import WeightDialog from "@/components/sales/WeightDialog.vue";
@@ -64,7 +66,7 @@ import {
   type Product,
   type ProductUnit,
 } from "@/db/catalog";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatRate, formatUsd } from "@/lib/format";
 import { categoryInk, categoryTint } from "@/lib/categoryColor";
 import AppIcon from "@/components/icons/AppIcon.vue";
 import ProductThumb from "@/components/catalog/ProductThumb.vue";
@@ -91,6 +93,10 @@ interface SaleResult {
   pointsValue: number;
   pointsEarned: number;
   pointsBalance: number | null;
+  /** Paid in dollars: how many, at what rate (IQD per 100 USD) */
+  tenderedUsd: number;
+  rate: number | null;
+  usdValue: number;
 }
 
 /** What the done panel shows: a sale (maybe an exchange) or a plain refund */
@@ -101,6 +107,8 @@ const { taxRate, currency, load: loadShop, profile } = useShop();
 const auth = useAuth();
 // Card payments only when the shop takes cards; loyalty points unless off
 const { cards: cardsOn, loyalty: loyaltyOn, pointValue, load: loadPayments } = usePayments();
+// Dollars at the till, when the shop takes them and a rate is set
+const rate = useRate();
 const pinDialog = ref<InstanceType<typeof ManagerPinDialog> | null>(null);
 const discountDialog = ref<InstanceType<typeof DiscountDialog> | null>(null);
 const cashDialog = ref<InstanceType<typeof CashDialog> | null>(null);
@@ -131,6 +139,7 @@ const returns = useReturnCart();
 const returnMode = ref(false);
 const openingOpen = ref(false);
 const openingExpected = ref(0);
+const openingExpectedUsd = ref<number | null>(null);
 
 // State
 const barcode = ref("");
@@ -518,6 +527,7 @@ const checkout = async () => {
   if (!cartItems.value.length) return refund();
 
   let tendered: number | null = null;
+  let tenderedUsd = 0;
   let cardAmount = 0;
   let onAccount = 0;
   let overLimitOverrideToken: string | null | undefined = null;
@@ -535,9 +545,10 @@ const checkout = async () => {
       if (overLimitOverrideToken === undefined) return focusScan();
     }
   } else if (payment.value === "cash" && dueNow.value > 0) {
-    const paid = (await cashDialog.value?.ask(dueNow.value, { split: cardsOn.value })) ?? null;
+    const paid = (await cashDialog.value?.ask(dueNow.value, { split: cardsOn.value, usd: rate.ready.value ? rate.per100.value : null })) ?? null;
     if (paid === null) return focusScan();
     tendered = paid.tendered;
+    tenderedUsd = paid.usd;
     cardAmount = paid.card;
   }
   // Promotions need no approval; discounts someone gives do
@@ -575,6 +586,8 @@ const checkout = async () => {
       wholesaleOverrideToken,
       points,
       cardAmount,
+      tenderedUsd,
+      rate: tenderedUsd > 0 ? rate.per100.value : null,
     });
     lastSale.value = { kind: "sale", sale };
     usePoints.value = false;
@@ -586,6 +599,8 @@ const checkout = async () => {
     await reloadProducts();
   } catch (e) {
     chargeError.value = errorMessage(e);
+    // The rate changed while the dialog was open: show the new one
+    if ((e as { code?: string })?.code === "rate_changed") rate.reload().catch(() => {});
   } finally {
     charging.value = false;
   }
@@ -742,11 +757,13 @@ onMounted(async () => {
     }));
   }
   focusScan();
+  rate.watch();
   // A new shift starts with counting the drawer
-  call<{ openingCounted: boolean; openingFloat: number } | null>("shift_summary")
+  call<{ openingCounted: boolean; openingFloat: number; usdEnabled: boolean; openingUsd: number } | null>("shift_summary")
     .then((sum) => {
       if (sum && !sum.openingCounted) {
         openingExpected.value = sum.openingFloat;
+        openingExpectedUsd.value = sum.usdEnabled ? sum.openingUsd : null;
         openingOpen.value = true;
       }
     })
@@ -777,6 +794,7 @@ onMounted(async () => {
   <div class="flex h-full min-h-0">
     <!-- Catalogue side -->
     <section class="flex min-w-0 flex-1 flex-col gap-5 overflow-y-auto p-6">
+      <RateBar />
       <form @submit.prevent="addItemByBarcode">
         <label for="scan" class="sr-only">{{ $t("pos.scanBarcode") }}</label>
         <div class="flex gap-2">
@@ -1078,6 +1096,9 @@ onMounted(async () => {
               <span v-if="lastSale.sale.returned" class="text-sm text-muted-foreground">
                 {{ $t("returnCart.exchanged", { amount: formatCurrency(lastSale.sale.returned) }) }}
               </span>
+              <span v-if="lastSale.sale.tenderedUsd" class="num text-sm text-muted-foreground">
+                {{ $t("cash.paidDollars", { usd: formatUsd(lastSale.sale.tenderedUsd), rate: formatRate(lastSale.sale.rate ?? 0) }) }}
+              </span>
               <span v-if="lastSale.sale.change" class="mt-2 rounded-lg bg-success/10 px-4 py-2 text-success">
                 {{ $t("cash.change") }}
                 <span class="num block text-3xl font-bold">{{ formatCurrency(lastSale.sale.change) }}</span>
@@ -1236,6 +1257,9 @@ onMounted(async () => {
               {{ formatCurrency(Math.abs(net)) }}
             </dd>
           </div>
+          <div v-if="rate.ready.value && net > 0" class="flex justify-end">
+            <span class="num text-sm text-muted-foreground" dir="ltr" :title="$t('cash.rate', { rate: formatRate(rate.per100.value!) })">≈ {{ formatUsd(Math.ceil((net / rate.per100.value!) * 10000) / 100) }}</span>
+          </div>
         </dl>
       </div>
 
@@ -1339,6 +1363,6 @@ onMounted(async () => {
       <p class="mt-2 text-xs text-muted-foreground">{{ $t("shortcuts.typing") }}</p>
     </div>
     <OnAccountDialog ref="onAccountDialog" />
-    <OpeningCashDialog v-model:open="openingOpen" :expected="openingExpected" @counted="focusScan()" />
+    <OpeningCashDialog v-model:open="openingOpen" :expected="openingExpected" :expected-usd="openingExpectedUsd" @counted="focusScan()" />
   </div>
 </template>
