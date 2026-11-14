@@ -12,14 +12,16 @@ import { getProductById, listProducts, type Product } from "@/db/catalog";
 import { listSuppliers, type Supplier } from "@/db/suppliers";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatIn, formatRate } from "@/lib/format";
+import { toIqd, useRate } from "@/stores/rate";
 import type { MediaFile } from "@/lib/media";
 import type { ScanResult } from "@/lib/scan";
 import { useAuth } from "@/stores/auth";
 
 // A delivery: many products received at once, each with its cost and
 // expiry, optionally by the carton. What isn't paid now is owed to the
-// supplier.
+// supplier. A dollar supplier's delivery is invoiced in USD (costs typed in
+// dollars); product costs are kept in IQD at the rate in use.
 const open = defineModel<boolean>("open", { required: true });
 const props = defineProps<{ supplierId?: number | null }>();
 const emit = defineEmits<{ saved: [] }>();
@@ -44,6 +46,15 @@ const note = ref("");
 const lines = ref<Line[]>([]);
 const paid = ref("");
 const method = ref<"till" | "cash" | "bank">("till");
+const rate = useRate();
+// A delivery with no supplier can be bought in dollars too
+const looseCurrency = ref<"IQD" | "USD">("IQD");
+const paidIn = ref<"USD" | "IQD">("USD");
+const currency = computed<"IQD" | "USD">(() =>
+  supplierId.value ? (suppliers.value.find((s) => String(s.id) === supplierId.value)?.currency ?? "IQD") : looseCurrency.value,
+);
+const usd = computed(() => currency.value === "USD");
+const money = (n: number) => formatIn(n, currency.value);
 const saving = ref(false);
 const error = ref("");
 
@@ -63,6 +74,9 @@ watch(open, async (v) => {
   lines.value = [];
   paid.value = "";
   method.value = "till";
+  looseCurrency.value = "IQD";
+  paidIn.value = "USD";
+  rate.reload().catch(() => {});
   error.value = "";
   query.value = "";
   results.value = [];
@@ -92,8 +106,16 @@ const add = (p: Product, unitId: number | null = null) => {
   nextTick(() => searchInput.value?.focus());
 };
 
-/** The last cost, per pack when receiving packs */
-const costFor = (p: Product, factor: number) => (p.cost ? String(p.cost * factor) : "");
+/** The last cost, per pack when receiving packs (in dollars at today's rate
+ *  for a dollar delivery) */
+const costFor = (p: Product, factor: number) => {
+  if (!p.cost) return "";
+  if (!usd.value) return String(p.cost * factor);
+  const r = rate.per100.value;
+  return r ? String(Math.round(((p.cost * factor) / r) * 10000) / 100) : "";
+};
+// Switching between a dinar and a dollar supplier: prices again in the new currency
+watch(currency, () => lines.value.forEach((l) => (l.cost = costFor(l.product, packOf(l)?.factor ?? 1))));
 
 // Enter: a barcode (product or pack), else the first search result
 const onEnter = async () => {
@@ -146,11 +168,15 @@ const save = async () => {
       // Without a supplier there's nobody to owe: it's paid in full
       paid: supplierId.value ? paidNow.value : total.value,
       paidMethod: method.value,
+      currency: supplierId.value ? null : looseCurrency.value,
+      paidIn: usd.value ? paidIn.value : null,
+      rate: usd.value ? rate.per100.value : null,
     });
     open.value = false;
     emit("saved");
   } catch (e) {
     error.value = errorMessage(e);
+    if ((e as { code?: string })?.code === "rate_changed") rate.reload().catch(() => {});
   } finally {
     saving.value = false;
   }
@@ -165,6 +191,13 @@ const save = async () => {
         <select id="d-supplier" v-model="supplierId" class="h-10 w-full rounded-md border border-input bg-card px-2 text-sm">
           <option value="">{{ $t("deliveries.noSupplier") }}</option>
           <option v-for="s in suppliers" :key="s.id" :value="String(s.id)">{{ s.name }}</option>
+        </select>
+      </div>
+      <div v-if="!supplierId && rate.enabled.value" class="space-y-2">
+        <Label for="d-currency">{{ $t("suppliers.fields.currency") }}</Label>
+        <select id="d-currency" v-model="looseCurrency" class="h-10 w-full rounded-md border border-input bg-card px-2 text-sm">
+          <option value="IQD">{{ $t("suppliers.currency.IQD") }}</option>
+          <option value="USD">{{ $t("suppliers.currency.USD") }}</option>
         </select>
       </div>
       <div class="space-y-2">
@@ -204,7 +237,7 @@ const save = async () => {
       <li v-for="(l, i) in lines" :key="`${l.product.id}:${l.unitId}`" class="space-y-2 rounded-lg border p-3">
         <div class="flex items-center gap-2">
           <bdi class="min-w-0 flex-1 truncate font-medium">{{ l.product.name }}</bdi>
-          <span class="num text-sm font-semibold">{{ formatCurrency(lineTotal(l)) }}</span>
+          <span class="num text-sm font-semibold">{{ money(lineTotal(l)) }}</span>
           <Button type="button" variant="ghost" size="icon-sm" :aria-label="$t('common.remove')" @click="lines.splice(i, 1)"><X /></Button>
         </div>
         <div class="grid grid-cols-[1fr_1fr_1.3fr] gap-2">
@@ -225,7 +258,7 @@ const save = async () => {
             </div>
           </div>
           <div class="space-y-1">
-            <Label class="text-xs">{{ packOf(l) ? $t("deliveries.costPer", { unit: packOf(l)!.name }) : $t("deliveries.cost") }}</Label>
+            <Label class="text-xs">{{ packOf(l) ? $t("deliveries.costPer", { unit: packOf(l)!.name }) : $t("deliveries.cost") }}<template v-if="usd"> ($)</template></Label>
             <Input v-model="l.cost" type="number" min="0" step="any" required dir="ltr" />
           </div>
           <div class="space-y-1">
@@ -245,7 +278,11 @@ const save = async () => {
     </div>
 
     <div class="space-y-3 rounded-xl border p-4">
-      <p class="flex justify-between text-lg font-semibold"><span>{{ $t("pos.total") }}</span><span class="num">{{ formatCurrency(total) }}</span></p>
+      <p class="flex justify-between text-lg font-semibold"><span>{{ $t("pos.total") }}</span><span class="num">{{ money(total) }}</span></p>
+      <p v-if="usd && rate.per100.value" class="num -mt-2 flex justify-between text-xs text-muted-foreground">
+        <span>{{ $t("cash.rate", { rate: formatRate(rate.per100.value) }) }}</span><span>≈ {{ formatCurrency(toIqd(total, rate.per100.value)) }}</span>
+      </p>
+      <p v-else-if="usd" role="alert" class="-mt-2 text-xs text-destructive">{{ $t("errors.no_rate") }}</p>
       <template v-if="canPay && supplierId">
         <div class="space-y-2">
           <Label for="d-paid">{{ $t("deliveries.paidNow") }}</Label>
@@ -257,7 +294,7 @@ const save = async () => {
             {{ $t(`suppliers.methods.${m}`) }}
           </button>
         </div>
-        <p class="flex justify-between text-sm text-muted-foreground"><span>{{ $t("deliveries.owedAfter") }}</span><span class="num">{{ formatCurrency(owedAfter) }}</span></p>
+        <p class="flex justify-between text-sm text-muted-foreground"><span>{{ $t("deliveries.owedAfter") }}</span><span class="num">{{ money(owedAfter) }}</span></p>
       </template>
       <template v-else-if="!supplierId">
         <p class="text-sm text-muted-foreground">{{ $t("deliveries.noSupplierPaid") }}</p>
@@ -268,6 +305,15 @@ const save = async () => {
           </button>
         </div>
       </template>
+      <div v-if="usd && method === 'till' && (supplierId ? paidNow > 0 : true)" class="space-y-1">
+        <Label class="text-xs">{{ $t("suppliers.fromDrawer") }}</Label>
+        <div class="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1" role="radiogroup">
+          <button v-for="c in ['USD', 'IQD'] as const" :key="c" type="button" role="radio" :aria-checked="paidIn === c"
+            class="h-9 rounded-md text-sm font-medium aria-checked:bg-card aria-checked:shadow-sm" @click="paidIn = c">
+            {{ $t(`suppliers.drawerIn.${c}`) }}
+          </button>
+        </div>
+      </div>
     </div>
 
     <template #footer>

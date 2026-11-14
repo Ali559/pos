@@ -3,7 +3,15 @@
 import { select, selectOne } from "./client";
 import { toUtc, type Range } from "@/lib/dateRange";
 
-export type PaymentMethod = "cash" | "card" | "exchange" | "credit" | "points";
+export type PaymentMethod = "cash" | "card" | "exchange" | "credit" | "points" | "usd";
+
+type Payment = { method: PaymentMethod; amount: number; tendered: number | null; foreign_amount?: number | null; rate?: number | null };
+
+/** How a payment reads on a receipt: dollars as "$100 @ 169,550". */
+export const paymentText = (p: Payment, money: (n: number) => string, usd: (n: number) => string) =>
+  p.method === "usd" && p.foreign_amount != null
+    ? `${usd(p.foreign_amount)} @ ${Math.round(p.rate ?? 0).toLocaleString("en")}`
+    : money(p.tendered ?? p.amount);
 
 export type SaleStatus = "completed" | "partially_refunded" | "refunded" | "pending";
 
@@ -81,7 +89,7 @@ export interface SaleDetail {
   tendered: number | null;
   change: number | null;
   refunded: number;
-  payments: { method: PaymentMethod; amount: number; tendered: number | null }[];
+  payments: Payment[];
   /** Who bought it, and what they owe now (for the receipt) */
   customer_id: number | null;
   customer_name: string | null;
@@ -107,7 +115,8 @@ export const getSale = async (id: number): Promise<SaleDetail | null> => {
             cu.loyalty_points AS points_balance,
             s.subtotal, COALESCE(s.discount_amount, 0) AS discount, COALESCE(s.tax_amount, 0) AS tax,
             s.total_amount AS total, s.payment_status AS status,
-            pay.payment_method AS method, pay.tendered, pay.change_given AS change,
+            pay.payment_method AS method, pay.tendered,
+            (SELECT SUM(change_given) FROM payments WHERE sale_id = s.id AND amount > 0) AS change,
             (SELECT COALESCE(-SUM(amount), 0) FROM payments WHERE sale_id = s.id AND amount < 0 AND payment_method <> 'exchange') AS refunded
      FROM sales s
      JOIN users u ON u.id = s.user_id
@@ -135,7 +144,7 @@ export const getSale = async (id: number): Promise<SaleDetail | null> => {
       [id],
     ),
     select<SaleDetail["payments"][number]>(
-      `SELECT payment_method AS method, amount, tendered FROM payments
+      `SELECT payment_method AS method, amount, tendered, foreign_amount, rate FROM payments
        WHERE sale_id = $1 AND amount > 0 ${PAYMENTS_ORDER}`,
       [id],
     ),

@@ -26,7 +26,7 @@ export const ACTIVITY_GROUPS: Record<string, string[]> = {
   stock: ["stock.", "product.", "category.", "import", "prices.", "promotion.", "delivery"],
   customers: ["customer.", "loyalty.", "supplier."],
   staff: ["role.", "user."],
-  money: ["expense.", "expense_type."],
+  money: ["expense.", "expense_type.", "rate."],
   system: ["setting", "shop.", "backup", "backup.", "till.", "export"],
 };
 

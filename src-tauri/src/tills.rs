@@ -160,7 +160,10 @@ pub async fn pair_with_main(app: AppHandle, args: PairArgs) -> Result<()> {
         return Err(Error::Rule("till_name_required"));
     }
     let reply = remote::pair(&server, &args.code, name, &version).await?;
-    remote::save(&app, Some(&remote::Link { server, token: reply.token, till_id: reply.till_id, name: name.to_owned() }))?;
+    remote::save(
+        &app,
+        Some(&remote::Link { server, token: reply.token, till_id: reply.till_id, name: name.to_owned(), fingerprint: Some(reply.fingerprint) }),
+    )?;
     app.restart();
 }
 

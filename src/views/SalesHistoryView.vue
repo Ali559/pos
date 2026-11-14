@@ -7,9 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import RangePicker, { resolveRange, type RangeModel } from "@/components/reports/RangePicker.vue";
 import ReturnDialog from "@/components/sales/ReturnDialog.vue";
-import { getSale, lineSold, listSales, type SaleDetail, type SaleRow, type SaleStatus } from "@/db/sales";
+import { getSale, lineSold, listSales, paymentText, type SaleDetail, type SaleRow, type SaleStatus } from "@/db/sales";
 import { errorMessage } from "@/lib/errors";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatUsd } from "@/lib/format";
 import { formatDateTime, formatTime } from "@/lib/locale";
 import { printReceipt } from "@/lib/print";
 import { useAuth } from "@/stores/auth";
@@ -180,7 +180,7 @@ const reprint = (id: number) => printReceipt(id, { copy: true }).catch((e) => (e
             <div class="flex justify-between text-base font-semibold"><dt>{{ $t("pos.total") }}</dt><dd class="num">{{ formatCurrency(selected.total) }}</dd></div>
             <div v-for="(pay, i) in selected.payments" :key="i" class="flex justify-between">
               <dt class="text-muted-foreground">{{ $t(`pos.${pay.method}`) }}</dt>
-              <dd class="num">{{ formatCurrency(pay.tendered ?? pay.amount) }}</dd>
+              <dd class="num" dir="ltr">{{ paymentText(pay, formatCurrency, formatUsd) }}</dd>
             </div>
             <div v-if="selected.change" class="flex justify-between"><dt class="text-muted-foreground">{{ $t("cash.change") }}</dt><dd class="num">{{ formatCurrency(selected.change) }}</dd></div>
             <div v-if="selected.refunded" class="flex justify-between text-destructive"><dt>{{ $t("receipt.refunded") }}</dt><dd class="num">−{{ formatCurrency(selected.refunded) }}</dd></div>

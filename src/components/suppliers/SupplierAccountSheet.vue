@@ -8,12 +8,14 @@ import EditSheet from "@/components/EditSheet.vue";
 import { getSupplier, getSupplierLedger, type Supplier, type SupplierEntry } from "@/db/suppliers";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatIn, formatRate } from "@/lib/format";
 import { formatDateTime } from "@/lib/locale";
 import { useAuth } from "@/stores/auth";
+import { toIqd, useRate } from "@/stores/rate";
 
 // One supplier: what the shop owes them, every delivery and payment, and
-// paying them.
+// paying them. A dollar supplier's account is in USD; paying it from the
+// till takes the drawer's dollars, or dinars at today's rate.
 const open = defineModel<boolean>("open", { required: true });
 const props = defineProps<{ supplierId: number | null }>();
 const emit = defineEmits<{ changed: []; edit: [supplier: Supplier] }>();
@@ -31,12 +33,17 @@ watch(open, (v) => v && load());
 
 // Paying (or adjusting) — one small form, two modes
 const mode = ref<null | "pay" | "adjust">(null);
-const form = ref({ amount: "", method: "till" as "till" | "cash" | "bank", direction: "more" as "more" | "less", note: "" });
+const form = ref({ amount: "", method: "till" as "till" | "cash" | "bank", direction: "more" as "more" | "less", note: "", paidIn: "USD" as "USD" | "IQD" });
+const rate = useRate();
+const usd = computed(() => supplier.value?.currency === "USD");
+const money = (n: number) => formatIn(n, supplier.value?.currency);
+const fromTillInDinars = computed(() => usd.value && mode.value === "pay" && form.value.method === "till" && form.value.paidIn === "IQD");
 const error = ref("");
 const start = (m: "pay" | "adjust") => {
   mode.value = mode.value === m ? null : m;
-  form.value = { amount: m === "pay" && supplier.value ? String(Math.max(0, supplier.value.owed)) : "", method: "till", direction: "more", note: "" };
+  form.value = { amount: m === "pay" && supplier.value ? String(Math.max(0, supplier.value.owed)) : "", method: "till", direction: "more", note: "", paidIn: "USD" };
   error.value = "";
+  if (usd.value) rate.reload().catch(() => {});
 };
 const submit = async () => {
   if (!supplier.value) return;
@@ -44,7 +51,14 @@ const submit = async () => {
   const n = Number(form.value.amount) || 0;
   try {
     if (mode.value === "pay") {
-      await call("pay_supplier", { supplierId: supplier.value.id, amount: n, method: form.value.method, note: form.value.note || null });
+      await call("pay_supplier", {
+        supplierId: supplier.value.id,
+        amount: n,
+        method: form.value.method,
+        note: form.value.note || null,
+        paidIn: usd.value ? form.value.paidIn : null,
+        rate: usd.value && form.value.method === "till" ? rate.per100.value : null,
+      });
     } else {
       await call("adjust_supplier_balance", { supplierId: supplier.value.id, amount: form.value.direction === "more" ? n : -n, note: form.value.note });
     }
@@ -53,10 +67,10 @@ const submit = async () => {
     emit("changed");
   } catch (e) {
     error.value = errorMessage(e);
+    if ((e as { code?: string })?.code === "rate_changed") rate.reload().catch(() => {});
   }
 };
 
-const signed = (n: number) => `${n > 0 ? "+" : "−"}${formatCurrency(Math.abs(n))}`;
 </script>
 
 <template>
@@ -64,7 +78,8 @@ const signed = (n: number) => `${n > 0 ? "+" : "−"}${formatCurrency(Math.abs(n
     <template v-if="supplier">
       <div class="rounded-xl border p-4">
         <p class="text-sm text-muted-foreground">{{ supplier.owed > 0 ? $t("suppliers.weOwe") : $t("suppliers.settled") }}</p>
-        <p class="num text-3xl font-bold" :class="supplier.owed > 0 ? 'text-destructive' : ''">{{ formatCurrency(Math.max(0, supplier.owed)) }}</p>
+        <p class="num text-3xl font-bold" :class="supplier.owed > 0 ? 'text-destructive' : ''" :dir="usd ? 'ltr' : undefined">{{ money(Math.max(0, supplier.owed)) }}</p>
+        <p v-if="usd && supplier.owed > 0 && rate.per100.value" class="num text-xs text-muted-foreground">≈ {{ formatCurrency(toIqd(supplier.owed, rate.per100.value)) }}</p>
         <p v-if="supplier.contact_person" class="mt-1 text-sm text-muted-foreground"><bdi>{{ supplier.contact_person }}</bdi></p>
         <div class="mt-3 flex flex-wrap gap-2">
           <Button v-if="auth.can('suppliers.pay') && supplier.owed > 0" type="button" @click="start('pay')"><Banknote />{{ $t("suppliers.pay") }}</Button>
@@ -95,6 +110,18 @@ const signed = (n: number) => `${n > 0 ? "+" : "−"}${formatCurrency(Math.abs(n
           </div>
           <p class="text-xs text-muted-foreground">{{ $t(`suppliers.methodHints.${form.method}`) }}</p>
         </div>
+        <div v-if="mode === 'pay' && usd && form.method === 'till'" class="space-y-2">
+          <Label>{{ $t("suppliers.fromDrawer") }}</Label>
+          <div class="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1" role="radiogroup">
+            <button v-for="c in ['USD', 'IQD'] as const" :key="c" type="button" role="radio" :aria-checked="form.paidIn === c"
+              class="h-9 rounded-md text-sm font-medium aria-checked:bg-card aria-checked:shadow-sm" @click="form.paidIn = c">
+              {{ $t(`suppliers.drawerIn.${c}`) }}
+            </button>
+          </div>
+          <p v-if="fromTillInDinars && rate.per100.value" class="num text-xs text-muted-foreground">
+            {{ $t("suppliers.dinarsOut", { amount: formatCurrency(toIqd(Number(form.amount) || 0, rate.per100.value)), rate: formatRate(rate.per100.value) }) }}
+          </p>
+        </div>
         <div class="space-y-2">
           <Label for="sp-note">{{ mode === "adjust" ? $t("customers.reason") : $t("customers.noteOptional") }}</Label>
           <Input id="sp-note" v-model="form.note" dir="auto" :required="mode === 'adjust'" />
@@ -117,8 +144,9 @@ const signed = (n: number) => `${n > 0 ? "+" : "−"}${formatCurrency(Math.abs(n
               <p v-if="e.note" class="text-xs italic text-muted-foreground"><bdi>{{ e.note }}</bdi></p>
             </div>
             <div class="text-end">
-              <p class="num font-semibold" :class="e.amount > 0 ? 'text-destructive' : 'text-success'">{{ signed(e.amount) }}</p>
-              <p class="num text-xs text-muted-foreground">{{ formatCurrency(e.running) }}</p>
+              <p class="num font-semibold" :class="e.amount > 0 ? 'text-destructive' : 'text-success'">{{ `${e.amount > 0 ? "+" : "−"}${formatIn(Math.abs(e.amount), e.currency)}` }}</p>
+              <p class="num text-xs text-muted-foreground">{{ formatIn(e.running, e.currency) }}</p>
+              <p v-if="e.rate" class="num text-[11px] text-muted-foreground" dir="ltr">@ {{ formatRate(e.rate) }}</p>
             </div>
           </li>
         </ol>

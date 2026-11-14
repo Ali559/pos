@@ -39,6 +39,8 @@ export interface CashierRow {
   refunded: number;
   /** Sum of over (+) and short (−) on drawers they closed in the range; null if none */
   drawer: number | null;
+  /** The same for the drawer's dollars; null if none were counted */
+  drawer_usd: number | null;
 }
 
 export interface DayReport {
@@ -86,12 +88,14 @@ export const dayReport = async (range: Range): Promise<DayReport> => {
               (SELECT COALESCE(SUM(s.discount_amount), 0) - COALESCE(SUM((SELECT SUM(promo_discount) FROM sale_items WHERE sale_id = s.id)), 0)
                  FROM sales s WHERE s.user_id = u.id AND ${SALES}) AS discounts,
               (SELECT COALESCE(SUM(pay.amount), 0) FROM payments pay JOIN sales s ON s.id = pay.sale_id
-                 WHERE s.user_id = u.id AND pay.payment_method = 'cash' AND pay.amount > 0 AND pay.payment_date >= $1 AND pay.payment_date < $2) AS cash,
+                 WHERE s.user_id = u.id AND pay.payment_method IN ('cash', 'usd') AND pay.amount > 0 AND pay.payment_date >= $1 AND pay.payment_date < $2) AS cash,
               (SELECT COALESCE(SUM(pay.amount), 0) FROM payments pay JOIN sales s ON s.id = pay.sale_id
                  WHERE s.user_id = u.id AND pay.payment_method = 'card' AND pay.amount > 0 AND pay.payment_date >= $1 AND pay.payment_date < $2) AS card,
               (SELECT COALESCE(SUM(r.total_refund), 0) FROM returns r WHERE r.user_id = u.id AND r.return_date >= $1 AND r.return_date < $2) AS refunded,
               (SELECT SUM(cd.difference) FROM shifts sh JOIN cash_drawers cd ON cd.id = sh.cash_drawer_id
-                 WHERE sh.user_id = u.id AND cd.closed_at >= $1 AND cd.closed_at < $2 AND cd.difference IS NOT NULL) AS drawer
+                 WHERE sh.user_id = u.id AND cd.closed_at >= $1 AND cd.closed_at < $2 AND cd.difference IS NOT NULL) AS drawer,
+              (SELECT SUM(cd.difference_usd) FROM shifts sh JOIN cash_drawers cd ON cd.id = sh.cash_drawer_id
+                 WHERE sh.user_id = u.id AND cd.closed_at >= $1 AND cd.closed_at < $2 AND cd.difference_usd IS NOT NULL) AS drawer_usd
        FROM users u
        WHERE EXISTS (SELECT 1 FROM sales s WHERE s.user_id = u.id AND ${SALES})
           OR EXISTS (SELECT 1 FROM returns r WHERE r.user_id = u.id AND r.return_date >= $1 AND r.return_date < $2)

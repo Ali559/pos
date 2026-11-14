@@ -7,7 +7,7 @@ use tauri::AppHandle;
 
 use crate::ctx::Ctx;
 use crate::error::{Error, Result};
-use crate::{auth, backup, catalog, customers, expenses, export, lookup, loyalty, notifications, pricing, printing, query, returns, sales, scale, settings, shifts, staff, stock, stockcount, suppliers};
+use crate::{auth, backup, catalog, customers, expenses, export, lookup, loyalty, notifications, pricing, printing, query, rates, returns, sales, scale, settings, shifts, staff, stock, stockcount, suppliers};
 
 macro_rules! commands {
     ($( $name:ident $( ($args:ty) )? -> $out:ty => $f:path; )*) => {
@@ -124,6 +124,12 @@ commands! {
     update_supplier (suppliers::UpdateSupplierArgs) -> () => suppliers::update_supplier;
     receive_delivery (suppliers::DeliveryArgs) -> suppliers::DeliveryResult => suppliers::receive_delivery;
     pay_supplier (suppliers::SupplierPaymentArgs) -> f64 => suppliers::pay_supplier;
+
+    exchange_rate -> rates::RateStatus => rates::exchange_rate;
+    set_rate (rates::SetRateArgs) -> rates::RateStatus => rates::set_rate;
+    accept_rate_offer (rates::SetRateArgs) -> rates::RateStatus => rates::accept_rate_offer;
+    dismiss_rate_offer -> rates::RateStatus => rates::dismiss_rate_offer;
+    fetch_rate_now -> rates::RateStatus => rates::fetch_rate_now;
     adjust_supplier_balance (suppliers::SupplierAdjustArgs) -> f64 => suppliers::adjust_supplier_balance;
 
     start_stock_count (stockcount::StartCountArgs) -> i64 => stockcount::start_stock_count;

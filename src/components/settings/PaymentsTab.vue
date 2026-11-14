@@ -8,9 +8,14 @@ import { Label } from "@/components/ui/label";
 import { errorMessage } from "@/lib/errors";
 import { formatCurrency } from "@/lib/format";
 import { usePayments } from "@/stores/payments";
+import { useAuth } from "@/stores/auth";
+import RatesCard from "@/components/rates/RatesCard.vue";
 
-// Settings → Payments: whether the shop takes cards, and loyalty points.
+// Settings → Payments: whether the shop takes cards, loyalty points, and US
+// dollars. Cards and points need system settings; dollars have their own
+// card (managers set the rate).
 const payments = usePayments();
+const canSystem = useAuth().can("settings.system");
 const form = ref({ cards: false, loyalty: true, earnPer: 1000, pointValue: 10 });
 const saved = ref(false);
 const error = ref("");
@@ -48,7 +53,9 @@ const save = async () => {
 </script>
 
 <template>
-  <form class="space-y-5" @submit.prevent="save">
+  <div class="space-y-5">
+  <RatesCard />
+  <form v-if="canSystem" class="space-y-5" @submit.prevent="save">
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2"><CreditCard :size="18" /> {{ $t("paymentsSettings.cardsTitle") }}</CardTitle>
@@ -102,4 +109,5 @@ const save = async () => {
       <span v-if="error" role="alert" class="text-sm text-destructive">{{ error }}</span>
     </div>
   </form>
+  </div>
 </template>

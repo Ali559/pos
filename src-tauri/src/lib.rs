@@ -19,6 +19,7 @@ mod loyalty;
 mod media;
 mod notifications;
 mod pricing;
+mod rates;
 mod printing;
 mod query;
 mod remote;
@@ -27,6 +28,7 @@ mod sales;
 mod scale;
 mod seeds;
 mod server;
+mod tls;
 mod settings;
 mod shifts;
 mod staff;
@@ -67,6 +69,26 @@ pub fn run() {
         .manage(Arc::new(server::LanServer::default()))
         .manage(backup::RestoreCandidate::default())
         .manage(import::ImportFile::default())
+        // On an extra till, images come from the main computer through here
+        .register_asynchronous_uri_scheme_protocol(remote::MEDIA_SCHEME, |ctx, req, responder| {
+            let app = ctx.app_handle().clone();
+            let file = req.uri().path().trim_start_matches('/').to_owned();
+            tauri::async_runtime::spawn(async move {
+                let file = percent_decode(&file);
+                let bytes = match remote::client(&app) {
+                    Some(c) if !file.is_empty() && !file.contains('/') && !file.contains("..") => c.media(&file).await.ok(),
+                    _ => None,
+                };
+                let res = tauri::http::Response::builder()
+                    // So the till can draw the logo onto a receipt canvas
+                    .header("access-control-allow-origin", "*");
+                responder.respond(match bytes {
+                    Some(b) => res.header("content-type", "image/webp").header("cache-control", "max-age=86400").body(b),
+                    None => res.status(404).body(Vec::new()),
+                }
+                .unwrap());
+            });
+        })
         .setup(|app| {
             app.manage(db::open_read_pool(app.handle())?);
             let link = remote::load(app.handle());
@@ -85,6 +107,7 @@ pub fn run() {
                 None => {
                     background::start(app.handle().clone());
                     server::start_if_enabled(app.handle());
+                    rates::start(app.handle().clone());
                 }
             }
             #[cfg(debug_assertions)]
@@ -172,6 +195,11 @@ pub fn run() {
             commands::update_supplier,
             commands::receive_delivery,
             commands::pay_supplier,
+            commands::exchange_rate,
+            commands::set_rate,
+            commands::accept_rate_offer,
+            commands::dismiss_rate_offer,
+            commands::fetch_rate_now,
             commands::adjust_supplier_balance,
             commands::start_stock_count,
             commands::record_count,
@@ -188,6 +216,25 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// `%20` and the like in a file name from a URL.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Some(v) = std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[cfg(test)]

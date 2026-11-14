@@ -7,12 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { call } from "@/lib/ipc";
 import { errorMessage } from "@/lib/errors";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatUsd } from "@/lib/format";
 import { formatTime } from "@/lib/locale";
 import { useAuth } from "@/stores/auth";
 import { Printer } from "lucide-vue-next";
 import { printSlip } from "@/lib/slip";
-import { shiftSlip, type ShiftSummary } from "@/lib/reportSlips";
+import { hasUsd, shiftSlip, type ShiftSummary } from "@/lib/reportSlips";
 
 // Before clocking out: what the shift took, what the drawer should hold,
 // and the cashier's count. The difference is saved with the drawer, and
@@ -23,6 +23,7 @@ const auth = useAuth();
 
 const summary = ref<ShiftSummary | null>(null);
 const counted = ref("");
+const countedUsd = ref("");
 const note = ref("");
 const busy = ref(false);
 const printAtEnd = ref(true);
@@ -31,6 +32,7 @@ const error = ref("");
 watch(open, async (isOpen) => {
   if (!isOpen) return;
   counted.value = "";
+  countedUsd.value = "";
   note.value = "";
   error.value = "";
   summary.value = null;
@@ -46,11 +48,17 @@ const difference = computed(() =>
 );
 
 const countedValue = () => (counted.value === "" ? null : Number(counted.value));
+// Dollars are counted when the shop takes them
+const usd = computed(() => !!summary.value?.usdEnabled);
+const usdValue = () => (!usd.value || countedUsd.value === "" ? null : Number(countedUsd.value));
+const differenceUsd = computed(() =>
+  usdValue() === null || !summary.value ? null : Math.round((usdValue()! - summary.value.expectedUsd) * 100) / 100,
+);
 const printReport = async () => {
   if (!summary.value) return;
   error.value = "";
   try {
-    await printSlip(shiftSlip(summary.value, auth.user.value?.fullName ?? "", countedValue()));
+    await printSlip(shiftSlip(summary.value, auth.user.value?.fullName ?? "", countedValue(), usdValue()));
   } catch (e) {
     error.value = errorMessage(e);
   }
@@ -62,7 +70,7 @@ const submit = async () => {
   try {
     // Printed first: the summary is gone once the shift has ended
     if (printAtEnd.value) await printReport();
-    await auth.endShift({ countedCash: countedValue(), note: note.value || null });
+    await auth.endShift({ countedCash: countedValue(), countedUsd: usdValue(), note: note.value || null });
     open.value = false;
     emit("ended");
   } catch (e) {
@@ -90,7 +98,15 @@ const submit = async () => {
           <div v-if="summary.cashRefunds" class="flex justify-between"><dt class="text-muted-foreground">{{ $t("shiftEnd.cashRefunds") }}</dt><dd class="num">{{ formatCurrency(summary.cashRefunds) }}</dd></div>
           <div v-if="summary.paidToSuppliers" class="flex justify-between"><dt class="text-muted-foreground">{{ $t("shiftEnd.paidToSuppliers") }}</dt><dd class="num">{{ formatCurrency(summary.paidToSuppliers) }}</dd></div>
           <div v-if="summary.debtPaidCash" class="flex justify-between"><dt class="text-muted-foreground">{{ $t("shiftEnd.debtPaid") }}</dt><dd class="num">+{{ formatCurrency(summary.debtPaidCash) }}</dd></div>
+          <div v-if="summary.usdChange" class="flex justify-between"><dt class="text-muted-foreground">{{ $t("shiftEnd.usdChange") }}</dt><dd class="num">−{{ formatCurrency(summary.usdChange) }}</dd></div>
           <div class="flex justify-between border-t pt-2 font-semibold"><dt>{{ $t("shiftEnd.expected") }}</dt><dd class="num">{{ formatCurrency(summary.expectedCash) }}</dd></div>
+          <template v-if="hasUsd(summary)">
+            <div class="flex justify-between border-t pt-2"><dt class="font-medium">{{ $t("shiftEnd.dollars") }}</dt><dd /></div>
+            <div class="flex justify-between"><dt class="text-muted-foreground">{{ $t("shiftEnd.float") }}</dt><dd class="num" dir="ltr">{{ formatUsd(summary.openingUsd) }}</dd></div>
+            <div v-if="summary.usdIn" class="flex justify-between"><dt class="text-muted-foreground">{{ $t("shiftEnd.usdIn") }}</dt><dd class="num" dir="ltr">+{{ formatUsd(summary.usdIn) }}</dd></div>
+            <div v-if="summary.paidToSuppliersUsd" class="flex justify-between"><dt class="text-muted-foreground">{{ $t("shiftEnd.paidToSuppliers") }}</dt><dd class="num" dir="ltr">{{ formatUsd(summary.paidToSuppliersUsd) }}</dd></div>
+            <div class="flex justify-between font-semibold"><dt>{{ $t("shiftEnd.expectedUsd") }}</dt><dd class="num" dir="ltr">{{ formatUsd(summary.expectedUsd) }}</dd></div>
+          </template>
           <div class="flex justify-between pt-1 text-muted-foreground"><dt>{{ $t("shiftEnd.cardSales") }}</dt><dd class="num">{{ formatCurrency(summary.cardSales + summary.cardRefunds + summary.debtPaidCard) }}</dd></div>
           <div v-if="summary.onAccount" class="flex justify-between text-muted-foreground"><dt>{{ $t("shiftEnd.onAccount") }}</dt><dd class="num">{{ formatCurrency(summary.onAccount) }}</dd></div>
           <div v-if="summary.pointsPaid" class="flex justify-between text-muted-foreground"><dt>{{ $t("reports.pointsPaid") }}</dt><dd class="num">{{ formatCurrency(summary.pointsPaid) }}</dd></div>
@@ -113,7 +129,18 @@ const submit = async () => {
             {{ difference === 0 ? $t("shiftEnd.balanced") : difference > 0 ? $t("shiftEnd.over", { amount: formatCurrency(difference) }) : $t("shiftEnd.short", { amount: formatCurrency(-difference) }) }}
           </p>
         </div>
-        <div v-if="summary && difference" class="space-y-2">
+        <div v-if="summary && usd" class="space-y-2">
+          <Label for="counted-usd">{{ $t("shiftEnd.countedUsd") }}</Label>
+          <Input id="counted-usd" v-model="countedUsd" type="number" min="0" step="any" dir="ltr" class="h-12 text-xl" />
+          <p
+            v-if="differenceUsd !== null"
+            class="text-sm font-medium"
+            :class="differenceUsd === 0 ? 'text-success' : 'text-destructive'"
+          >
+            {{ differenceUsd === 0 ? $t("shiftEnd.balanced") : differenceUsd > 0 ? $t("shiftEnd.over", { amount: formatUsd(differenceUsd) }) : $t("shiftEnd.short", { amount: formatUsd(-differenceUsd) }) }}
+          </p>
+        </div>
+        <div v-if="summary && (difference || differenceUsd)" class="space-y-2">
           <Label for="shift-note">{{ $t("shiftEnd.note") }} <span class="font-normal text-muted-foreground">({{ $t("common.optional") }})</span></Label>
           <Input id="shift-note" v-model="note" dir="auto" />
         </div>

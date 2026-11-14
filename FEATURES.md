@@ -27,7 +27,7 @@ Legend: **S** small (a day or less) · **M** a few days · **L** a week or more
 | ✅ | Hardware barcode scanner focus | S | Typing anywhere with nothing focused goes to the scan field. |
 | ✅ | Keyboard shortcuts | S | F1–F12 and Esc, with key hints on wide screens (Phase 13). |
 | ✅ | Cash tendered & change due | S | Banknote buttons, change due, both stored on the payment. |
-| ⬜ | Dual currency (IQD + USD) | M | Parked: IQD only for now (decided 2026-11-07). `src/lib/format.ts` is the single place money is formatted. |
+| ✅ | Dual currency (IQD + USD) | M | Dollars at the till and for suppliers, at a market rate read from Telegram (2026-11-14, `PLAN2.md` §15). Prices and debt stay in IQD. |
 | ✅ | Split payments | S | Cash plus card on one sale, when card payments are on (Settings → Payments; off by default). |
 | ✅ | Hold / recall sales | S | F4 hold, F5 held sales. |
 | ✅ | Line discounts & cart discount | S | Permission-gated, manager PIN otherwise. |

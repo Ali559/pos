@@ -27,7 +27,16 @@ Built 2026-11-09 (see `PLAN2.md` §14). Checked with tests and in the browser pr
 - [ ] **Two tills on a real network**: pair a second computer with the main one, sell on both, unplug the main one and see the till say so. So far the main computer's till server was driven over HTTP (pairing, sign-in, a sale tagged with the till, refusals, removing a till); the till side's native window wasn't run.
 - [ ] **Excel export** from the desktop app (the file is written by a unit-tested function; the save dialog wasn't opened).
 - [ ] **PDF export and the shift / day slips** through the real print dialog and on the receipt printer (only their contents were checked).
+- [ ] **Encrypted tills on real machines** (built 2026-11-14, see ARCHITECTURE.md → *Several tills*): pair a new till, update a till paired on 0.3.0 and see it learn the certificate, check product photos load on the till. Covered by Rust tests over real TLS sockets on one computer only.
 - [ ] **A return of a sale paid partly with points**, at the till (covered by a Rust test only).
+
+## Check the dollars for real
+
+Built 2026-11-14 (see `PLAN2.md` §15). Covered by Rust tests and the typechecker only:
+
+- [x] In the app (2026-11-14): Telegram check offered Erbil's rate and it was accepted; a sale paid with $1 (done panel, sales history, payment rows, shift summary); the supplier form and a dollar delivery form (not saved).
+- [ ] Still to click: the end-of-shift dialog counting dollars, saving a dollar delivery and paying a dollar supplier, and a receipt paid in dollars on the real printer.
+- [ ] Watch the Telegram rate check for a day: the channels' posts must keep their "city / price" layout. If they change, `rates::rate_in` needs a look (the rate can always be typed meanwhile).
 
 ## Languages and platform
 
@@ -48,9 +57,7 @@ Built 2026-11-09 (see `PLAN2.md` §14). Checked with tests and in the browser pr
 ## Still not built
 
 - [ ] **Working offline on an extra till**: an extra till can't sell while the main computer is off or unreachable.
-- [ ] **Encrypted till traffic**: tills talk to the main computer over plain HTTP on the local network (each till has its own secret). Fine on the shop's own network; TLS would be needed before anything crosses the internet.
 - [ ] **Syncing to a hosted database** (the other option in `FEATURES.md`): not started.
-- [ ] IQD + USD with an exchange rate (IQD only for now, decided 2026-11-07).
 
 ## Open questions
 

@@ -29,11 +29,12 @@ export const uploadMedia = async (file: File): Promise<MediaFile> => {
 let base: Promise<{ dir: string | null; url: string | null; token: string | null }> | null = null;
 
 /** URL for a stored file: asset:// from this computer's media folder, the
- *  main computer when this is an extra till, or the dev bridge in a browser. */
+ *  main computer when this is an extra till (through the app's `tillmedia:`
+ *  protocol), or the dev bridge in a browser. */
 export const mediaUrl = async (media: Pick<MediaFile, "path">) => {
   if (!inDesktopApp) return import.meta.env.DEV ? `/__bridge/media/${media.path}` : null;
   base ??= invoke("media_base");
   const b = await base;
-  if (b.url) return `${b.url}${encodeURIComponent(media.path)}?t=${b.token}`;
+  if (b.url) return `${b.url}${encodeURIComponent(media.path)}${b.token ? `?t=${b.token}` : ""}`;
   return convertFileSrc(await join(b.dir!, media.path));
 };

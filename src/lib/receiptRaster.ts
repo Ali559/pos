@@ -2,10 +2,10 @@
 // 384 dots across 58 mm paper, 576 across 80 mm) and packs it into the
 // 1-bit rows ESC/POS expects. The browser lays out the text, so Kurdish and
 // Arabic come out shaped and right-to-left, which printer fonts can't do.
-import { lineSold, type SaleDetail } from "@/db/sales";
+import { lineSold, paymentText, type SaleDetail } from "@/db/sales";
 import type { ShopProfile } from "@/db/shop";
 import { code128Bars } from "@/lib/code128";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatUsd } from "@/lib/format";
 import { formatDateTime } from "@/lib/locale";
 import { i18n } from "@/utils/i18n";
 
@@ -169,7 +169,7 @@ export const renderReceipt = async (
   if (sale.tax > 0) row(t("pos.tax"), formatCurrency(sale.tax));
   y += 4;
   row(t("pos.total"), formatCurrency(sale.total), Math.round(base * 1.3), true);
-  for (const p of sale.payments) row(t(`pos.${p.method}`), formatCurrency(p.tendered ?? p.amount));
+  for (const p of sale.payments) row(t(`pos.${p.method}`), paymentText(p, formatCurrency, formatUsd));
   if (sale.change) row(t("cash.change"), formatCurrency(sale.change));
   if (sale.refunded > 0) row(t("receipt.refunded"), `−${formatCurrency(sale.refunded)}`);
   if (sale.customer_balance) row(t("receipt.balanceOwed"), formatCurrency(sale.customer_balance), base, true);

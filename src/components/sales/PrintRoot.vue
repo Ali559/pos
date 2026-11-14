@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { code128Bars } from "@/lib/code128";
-import { formatCurrency } from "@/lib/format";
-import { lineSold } from "@/db/sales";
+import { formatCurrency, formatUsd } from "@/lib/format";
+import { lineSold, paymentText } from "@/db/sales";
 import { formatDateTime } from "@/lib/locale";
 import { printing } from "@/lib/print";
 import { useShop } from "@/stores/shop";
@@ -69,7 +69,7 @@ const barcode = computed(() => (p.value ? code128Bars(p.value.sale.receipt_numbe
         <dd class="pt-1 text-end text-[1.3em] font-bold">{{ formatCurrency(p.sale.total) }}</dd>
         <template v-for="(pay, i) in p.sale.payments" :key="i">
           <dt>{{ $t(`pos.${pay.method}`) }}</dt>
-          <dd class="text-end">{{ formatCurrency(pay.tendered ?? pay.amount) }}</dd>
+          <dd class="text-end" dir="ltr">{{ paymentText(pay, formatCurrency, formatUsd) }}</dd>
         </template>
         <template v-if="p.sale.change">
           <dt>{{ $t("cash.change") }}</dt><dd class="text-end">{{ formatCurrency(p.sale.change) }}</dd>

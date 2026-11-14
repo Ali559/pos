@@ -277,7 +277,7 @@ pub struct MediaBase {
 #[tauri::command]
 pub fn media_base(app: AppHandle) -> Result<MediaBase> {
     Ok(match crate::remote::client(&app) {
-        Some(c) => MediaBase { dir: None, url: Some(c.media_base()), token: Some(c.link.token.clone()) },
+        Some(_) => MediaBase { dir: None, url: Some(crate::remote::media_base()), token: None },
         None => MediaBase { dir: Some(media_dir(&app)?.to_string_lossy().into_owned()), url: None, token: None },
     })
 }

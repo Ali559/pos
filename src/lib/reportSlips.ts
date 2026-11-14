@@ -1,7 +1,7 @@
 // Slips for the end of a shift and the end of the day, in the shop's
 // language. Printed with printSlip (receipt printer or print dialog).
 import type { DayReport } from "@/db/reports";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatUsd } from "@/lib/format";
 import { formatDate, formatDateTime } from "@/lib/locale";
 import type { SlipLine } from "@/lib/slip";
 import { useShop } from "@/stores/shop";
@@ -34,7 +34,19 @@ export interface ShiftSummary {
   pointsPaid: number;
   returns: number;
   returnsTotal: number;
+  /** Dollars, when the shop takes them (see shifts.rs) */
+  usdEnabled: boolean;
+  openingUsd: number;
+  usdIn: number;
+  usdSales: number;
+  /** Dinars given back as change for dollars */
+  usdChange: number;
+  paidToSuppliersUsd: number;
+  expectedUsd: number;
 }
+
+/** The drawer holds dollars worth showing */
+export const hasUsd = (s: ShiftSummary) => s.usdEnabled && (s.openingUsd !== 0 || s.usdIn !== 0 || s.paidToSuppliersUsd !== 0);
 
 const header = (title: string): SlipLine[] => {
   const shop = useShop().profile.value;
@@ -46,7 +58,7 @@ const header = (title: string): SlipLine[] => {
   ];
 };
 
-export const shiftSlip = (s: ShiftSummary, who: string, counted: number | null): SlipLine[] => {
+export const shiftSlip = (s: ShiftSummary, who: string, counted: number | null, countedUsd: number | null = null): SlipLine[] => {
   const lines: SlipLine[] = [
     ...header(t("reports.shiftTitle")),
     row(t("receipt.cashier"), who),
@@ -64,11 +76,24 @@ export const shiftSlip = (s: ShiftSummary, who: string, counted: number | null):
   if (s.cashRefunds) lines.push(row(t("shiftEnd.cashRefunds"), money(s.cashRefunds), false, true));
   if (s.debtPaidCash) lines.push(row(t("shiftEnd.debtPaid"), `+${money(s.debtPaidCash)}`, false, true));
   if (s.paidToSuppliers) lines.push(row(t("shiftEnd.paidToSuppliers"), money(s.paidToSuppliers), false, true));
+  if (s.usdChange) lines.push(row(t("shiftEnd.usdChange"), `−${money(s.usdChange)}`, false, true));
   lines.push(row(t("shiftEnd.expected"), money(s.expectedCash), true));
   if (counted !== null) {
     lines.push(row(t("shiftEnd.counted"), money(counted), true));
     const diff = counted - s.expectedCash;
     lines.push(row(diff === 0 ? t("shiftEnd.balanced") : diff > 0 ? t("reports.over") : t("reports.short"), diff === 0 ? "" : money(Math.abs(diff)), true));
+  }
+  if (hasUsd(s)) {
+    lines.push({ kind: "heading", text: t("shiftEnd.dollars") });
+    lines.push(row(t("shiftEnd.float"), formatUsd(s.openingUsd), false, true));
+    if (s.usdIn) lines.push(row(t("shiftEnd.usdIn"), `+${formatUsd(s.usdIn)}`, false, true));
+    if (s.paidToSuppliersUsd) lines.push(row(t("shiftEnd.paidToSuppliers"), formatUsd(s.paidToSuppliersUsd), false, true));
+    lines.push(row(t("shiftEnd.expected"), formatUsd(s.expectedUsd), true));
+    if (countedUsd !== null) {
+      lines.push(row(t("shiftEnd.counted"), formatUsd(countedUsd), true));
+      const diff = Math.round((countedUsd - s.expectedUsd) * 100) / 100;
+      lines.push(row(diff === 0 ? t("shiftEnd.balanced") : diff > 0 ? t("reports.over") : t("reports.short"), diff === 0 ? "" : formatUsd(Math.abs(diff)), true));
+    }
   }
   lines.push({ kind: "rule" });
   const card = s.cardSales + s.cardRefunds + s.debtPaidCard;
@@ -113,6 +138,9 @@ export const daySlip = (r: DayReport, label: string): SlipLine[] => {
       if (c.refunded) lines.push(row(t("reports.refunds"), `−${money(c.refunded)}`, false, true));
       if (c.drawer !== null) {
         lines.push(row(c.drawer === 0 ? t("shiftEnd.balanced") : c.drawer > 0 ? t("reports.over") : t("reports.short"), c.drawer === 0 ? "" : money(Math.abs(c.drawer)), false, true));
+      }
+      if (c.drawer_usd) {
+        lines.push(row(c.drawer_usd > 0 ? t("reports.over") : t("reports.short"), formatUsd(Math.abs(c.drawer_usd)), false, true));
       }
     }
   }
